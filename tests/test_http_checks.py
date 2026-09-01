@@ -46,11 +46,72 @@ def test_fully_hardened_response_is_clean():
             "x-content-type-options": "nosniff",
             "x-frame-options": "DENY",
             "referrer-policy": "no-referrer",
+            "permissions-policy": "geolocation=()",
+            "cache-control": "no-store",
         },
         cookies=["sid=abc; Secure; HttpOnly; SameSite=Strict"],
     )
     out = A.analyze("E", "https://x.example/", resp, "ref")
     assert out == []
+
+
+def _hardened(**overrides):
+    h = {
+        "strict-transport-security": "max-age=1",
+        "content-security-policy": "default-src 'self'",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "referrer-policy": "no-referrer",
+        "permissions-policy": "geolocation=()",
+        "cache-control": "no-store",
+    }
+    h.update(overrides)
+    return h
+
+
+def test_clickjacking_when_no_frame_protection():
+    h = _hardened()
+    h.pop("x-frame-options")  # and CSP has no frame-ancestors
+    out = A.analyze("E", "https://x.example/", _Resp("https://x.example/", 200, h), "r")
+    assert "clickjacking" in _rules(out)
+
+
+def test_clickjacking_suppressed_by_csp_frame_ancestors():
+    h = _hardened(**{"content-security-policy": "frame-ancestors 'none'"})
+    h.pop("x-frame-options")
+    out = A.analyze("E", "https://x.example/", _Resp("https://x.example/", 200, h), "r")
+    assert "clickjacking" not in _rules(out)
+
+
+def test_missing_permissions_policy():
+    h = _hardened()
+    h.pop("permissions-policy")
+    out = A.analyze("E", "https://x.example/", _Resp("https://x.example/", 200, h), "r")
+    assert "missing-permissions-policy" in _rules(out)
+
+
+def test_cacheable_sensitive_response():
+    h = _hardened()
+    h.pop("cache-control")
+    resp = _Resp("https://x.example/", 200, h, cookies=["sid=1; Secure; HttpOnly; SameSite=Lax"])
+    assert "cacheable-sensitive-response" in _rules(A.analyze("E", "https://x.example/", resp, "r"))
+
+
+def test_cache_control_no_store_suppresses_finding():
+    resp = _Resp("https://x.example/", 200, _hardened(), cookies=["sid=1; Secure; HttpOnly; SameSite=Lax"])
+    assert "cacheable-sensitive-response" not in _rules(A.analyze("E", "https://x.example/", resp, "r"))
+
+
+# --- HTTP methods ----------------------------------------------------------
+def test_check_methods_trace_and_dangerous():
+    out = A._check_methods("E", "https://x.example/", "GET, POST, PUT, DELETE, TRACE", "r")
+    rules = _rules(out)
+    assert "http-trace-enabled" in rules
+    assert "dangerous-http-methods" in rules
+
+
+def test_check_methods_safe_set_clean():
+    assert A._check_methods("E", "https://x.example/", "GET, POST, HEAD, OPTIONS", "r") == []
 
 
 def test_version_disclosure():

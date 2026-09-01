@@ -28,6 +28,7 @@ from anvil.controller.scope_guard import ScopeGuard, ScopeViolation
 from anvil.evidence.store import EvidenceStore
 from anvil.pipelines.dast.http_checks import HttpChecksAdapter
 from anvil.pipelines.dast.nuclei import NucleiAdapter
+from anvil.pipelines.dast.testssl import TestSslAdapter
 from anvil.pipelines.sast.gitleaks import GitleaksAdapter
 from anvil.pipelines.sast.semgrep import SemgrepAdapter
 from anvil.pipelines.sast.trivy import TrivyAdapter
@@ -148,7 +149,7 @@ class Engagement:
     def _dast_adapters():
         """The DAST scanner set. http-checks is first-party and always available,
         so the live pipeline works even when nuclei isn't installed."""
-        return [HttpChecksAdapter(), NucleiAdapter()]
+        return [HttpChecksAdapter(), TestSslAdapter(), NucleiAdapter()]
 
     def scan_url(self, target_url: str) -> List[Finding]:
         try:

@@ -43,13 +43,17 @@ from anvil.schemas.finding import (
 
 _UA = "Anvil-Scanner/0.1 (authorized security assessment)"
 
-# Headers whose absence is a hygiene finding.
+# Headers whose absence is a hygiene finding. Frame protection is handled by a
+# dedicated clickjacking check (it also accepts CSP frame-ancestors), so
+# X-Frame-Options is intentionally not in this generic set.
 _SECURITY_HEADERS = {
     "content-security-policy": "Content-Security-Policy",
     "x-content-type-options": "X-Content-Type-Options",
-    "x-frame-options": "X-Frame-Options",
     "referrer-policy": "Referrer-Policy",
 }
+
+# HTTP methods worth flagging if the server advertises them via OPTIONS/Allow.
+_DANGEROUS_METHODS = {"PUT", "DELETE", "PATCH", "CONNECT"}
 
 # Small, curated list of files that should never be web-reachable.
 _SENSITIVE_PATHS = [
@@ -73,6 +77,7 @@ class _Resp:
     cookies: List[str] = field(default_factory=list)
     body: str = ""
     error: Optional[str] = None
+    tls_verify_failed: bool = False
 
 
 class _ScopeCheckedRedirect(urllib.request.HTTPRedirectHandler):
@@ -101,18 +106,32 @@ class HttpChecksAdapter(DastAdapter):
         return True  # always available — pure stdlib
 
     # --- network ------------------------------------------------------------
-    def _get(self, url: str, guard: ScopeGuard, extra_headers: Optional[dict] = None) -> _Resp:
+    def _get(self, url: str, guard: ScopeGuard, extra_headers: Optional[dict] = None,
+             method: str = "GET", verify: bool = True) -> _Resp:
         guard.check_url(url)  # re-validate at request time
-        opener = urllib.request.build_opener(_ScopeCheckedRedirect(guard))
+        ctx = ssl.create_default_context()
+        if not verify:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ctx), _ScopeCheckedRedirect(guard)
+        )
         headers = {"User-Agent": _UA}
         headers.update(extra_headers or {})
-        req = urllib.request.Request(url, headers=headers)
-        ctx = ssl.create_default_context()
+        req = urllib.request.Request(url, headers=headers, method=method)
         try:
             raw = opener.open(req, timeout=self.timeout)
         except urllib.error.HTTPError as exc:
             raw = exc  # HTTPError is response-like (.status/.code, .headers)
-        except (urllib.error.URLError, ssl.SSLError, TimeoutError, ValueError) as exc:
+        except urllib.error.URLError as exc:
+            # A cert-verification failure shouldn't blind the header checks:
+            # retry unverified so we can still inspect, and flag the cert issue.
+            if verify and isinstance(getattr(exc, "reason", None), ssl.SSLCertVerificationError):
+                retried = self._get(url, guard, extra_headers, method, verify=False)
+                retried.tls_verify_failed = True
+                return retried
+            return _Resp(url=url, error=str(exc))
+        except (ssl.SSLError, TimeoutError, ValueError) as exc:
             return _Resp(url=url, error=str(exc))
 
         hdrs = {k.lower(): v for k, v in raw.headers.items()}
@@ -143,10 +162,36 @@ class HttpChecksAdapter(DastAdapter):
         ref = evidence.put(json.dumps(record, default=str), label=f"http_{engagement_id}")
         findings += self.analyze(engagement_id, target_url, main, ref)
 
+        if main.tls_verify_failed:
+            findings.append(self._mk(
+                engagement_id, target_url, "tls-cert-untrusted", "certverify",
+                "TLS certificate failed verification (untrusted chain, hostname mismatch, or expired).",
+                "Serve a certificate from a trusted CA that matches the hostname and is within its validity period.",
+                Severity.MEDIUM, ["CWE-295"], "A02:2021-Cryptographic Failures", ref,
+            ))
+
         # CORS probe: send an arbitrary Origin and see how the server responds.
         cors = self._get(target_url, guard, extra_headers={"Origin": _CORS_PROBE_ORIGIN})
         if not cors.error:
             findings += self._check_cors(engagement_id, target_url, cors.headers, ref)
+
+        # HTTP method enumeration via OPTIONS (read-only; just reads the Allow header).
+        opt = self._get(target_url, guard, method="OPTIONS")
+        if not opt.error and opt.headers.get("allow"):
+            findings += self._check_methods(engagement_id, target_url, opt.headers["allow"], ref)
+
+        # security.txt presence (RFC 9116 — coordinated disclosure best practice).
+        p = urlparse(target_url)
+        base = f"{p.scheme}://{p.netloc}"
+        sec_url = urljoin(base, "/.well-known/security.txt")
+        sec = self._get(sec_url, guard)
+        if sec.error or sec.status != 200:
+            findings.append(self._mk(
+                engagement_id, sec_url, "missing-security-txt", "securitytxt",
+                "No /.well-known/security.txt published for coordinated disclosure.",
+                "Publish a security.txt (RFC 9116) with a security contact.",
+                Severity.INFO, [], "A05:2021-Security Misconfiguration", ref, Confidence.HIGH,
+            ))
 
         if self.probe_paths:
             findings += self._probe_sensitive_paths(engagement_id, target_url, guard, ref)
@@ -182,9 +227,46 @@ class HttpChecksAdapter(DastAdapter):
                 engagement_id, url, "missing-security-headers", "secheaders",
                 "Missing recommended security headers: " + ", ".join(missing) + ".",
                 "Add the missing headers (e.g. a restrictive Content-Security-Policy, "
-                "X-Content-Type-Options: nosniff, X-Frame-Options: DENY, Referrer-Policy).",
+                "X-Content-Type-Options: nosniff, Referrer-Policy).",
                 Severity.LOW, ["CWE-693"], "A05:2021-Security Misconfiguration", ref,
             ))
+
+        # Clickjacking: no X-Frame-Options AND no CSP frame-ancestors directive.
+        csp = h.get("content-security-policy", "")
+        if "x-frame-options" not in h and "frame-ancestors" not in csp:
+            out.append(self._mk(
+                engagement_id, url, "clickjacking", "clickjacking",
+                "No clickjacking protection: neither X-Frame-Options nor a CSP "
+                "frame-ancestors directive is present.",
+                "Set 'X-Frame-Options: DENY' (or SAMEORIGIN) and/or a CSP "
+                "'frame-ancestors' directive.",
+                Severity.MEDIUM, ["CWE-1021"], "A05:2021-Security Misconfiguration", ref,
+            ))
+
+        # Permissions-Policy (feature policy) absent.
+        if "permissions-policy" not in h:
+            out.append(self._mk(
+                engagement_id, url, "missing-permissions-policy", "permspolicy",
+                "No Permissions-Policy header to restrict powerful browser features.",
+                "Add a Permissions-Policy header disabling unused features "
+                "(e.g. geolocation, camera, microphone).",
+                Severity.INFO, ["CWE-693"], "A05:2021-Security Misconfiguration", ref,
+                Confidence.HIGH,
+            ))
+
+        # Sensitive (cookie-setting) responses should not be cacheable.
+        if resp.cookies:
+            cache = h.get("cache-control", "").lower()
+            if "no-store" not in cache and "private" not in cache:
+                out.append(self._mk(
+                    engagement_id, url, "cacheable-sensitive-response", "cache",
+                    "Response sets a cookie but is not marked non-cacheable "
+                    "(no Cache-Control: no-store/private), risking storage of "
+                    "sensitive data in shared caches.",
+                    "Send 'Cache-Control: no-store' (or private) on responses that "
+                    "carry session cookies or sensitive data.",
+                    Severity.LOW, ["CWE-525"], "A05:2021-Security Misconfiguration", ref,
+                ))
 
         # Version / tech disclosure
         disclosed = [
@@ -243,6 +325,26 @@ class HttpChecksAdapter(DastAdapter):
             "Restrict Access-Control-Allow-Origin to an explicit allowlist and avoid reflecting arbitrary origins.",
             sev, ["CWE-942"], "A05:2021-Security Misconfiguration", ref,
         )]
+
+    def _check_methods(self, engagement_id: str, url: str, allow_header: str, ref: str) -> List[Finding]:
+        methods = {m.strip().upper() for m in allow_header.split(",") if m.strip()}
+        out: List[Finding] = []
+        if "TRACE" in methods:
+            out.append(self._mk(
+                engagement_id, url, "http-trace-enabled", "trace",
+                "HTTP TRACE method is enabled (Cross-Site Tracing / XST risk).",
+                "Disable the TRACE method at the web server.",
+                Severity.MEDIUM, ["CWE-693"], "A05:2021-Security Misconfiguration", ref,
+            ))
+        dangerous = sorted(methods & _DANGEROUS_METHODS)
+        if dangerous:
+            out.append(self._mk(
+                engagement_id, url, "dangerous-http-methods", "methods",
+                "Server advertises potentially unsafe HTTP methods: " + ", ".join(dangerous) + ".",
+                "Disable write verbs (PUT, DELETE, PATCH, CONNECT) unless required and access-controlled.",
+                Severity.MEDIUM, ["CWE-16"], "A05:2021-Security Misconfiguration", ref,
+            ))
+        return out
 
     def _probe_sensitive_paths(self, engagement_id: str, target_url: str, guard: ScopeGuard, ref: str) -> List[Finding]:
         p = urlparse(target_url)
