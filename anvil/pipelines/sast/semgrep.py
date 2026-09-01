@@ -32,7 +32,7 @@ _SEVERITY_MAP = {
 
 # Dependency / build / vendored directories we never want to scan as first-party
 # code. Shared conceptually with the other SAST adapters.
-_EXCLUDE_DIRS = ["node_modules", "dist", "build", "coverage", "vendor", ".git", ".venv"]
+_EXCLUDE_DIRS = ["node_modules", "dist", "build", "coverage", "vendor", ".git", ".venv", ".claude"]
 
 
 class SemgrepAdapter(SastAdapter):

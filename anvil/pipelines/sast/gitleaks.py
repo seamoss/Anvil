@@ -31,7 +31,7 @@ from anvil.schemas.finding import (
 
 _EXCLUDE_DIRS = [
     "node_modules", "dist", "build", "coverage", "vendor", ".git", ".venv",
-    ".next", ".turbo", "out", "__snapshots__",
+    ".next", ".turbo", "out", "__snapshots__", ".claude",
 ]
 
 # File patterns that generate high-entropy false positives (lock-file integrity

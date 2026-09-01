@@ -31,7 +31,7 @@ from anvil.schemas.finding import (
     Severity,
 )
 
-_EXCLUDE_DIRS = ["node_modules", "dist", "build", "coverage", "vendor", ".venv"]
+_EXCLUDE_DIRS = ["node_modules", "dist", "build", "coverage", "vendor", ".venv", ".claude"]
 
 _EXT_LANG = {
     ".py": "python",
