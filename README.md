@@ -31,8 +31,8 @@ authorization (signed) → scope guard → SAST | DAST pipeline
 | Evidence | `anvil/evidence/` | content-addressed raw scanner output |
 | SAST | `anvil/pipelines/sast/` | Semgrep + Bandit + CodeQL (code), gitleaks (secrets), Trivy (SCA) adapters |
 | DAST | `anvil/pipelines/dast/` | http-checks (built-in: headers/cookies/CORS/methods/exposure/clickjacking), testssl (TLS/cert), nuclei (safe posture) |
-| Triage | `anvil/triage/` | Claude triage + offline heuristic fallback |
-| Reporting | `anvil/reporting/` | OWASP Top 10 / SOC 2 / CVSS Markdown report |
+| Triage | `anvil/triage/` | Claude triage (prompt-cached, chunked) + SCA fast-path + offline heuristic fallback |
+| Reporting | `anvil/reporting/` | OWASP Top 10 / SOC 2 / CWE + CVSS reports — Markdown, SARIF, HTML/PDF |
 
 ## Install
 
