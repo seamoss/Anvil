@@ -29,13 +29,33 @@ from anvil.schemas.finding import (
 )
 
 
-_EXCLUDE_DIRS = ["node_modules", "dist", "build", "coverage", "vendor", ".git", ".venv"]
+_EXCLUDE_DIRS = [
+    "node_modules", "dist", "build", "coverage", "vendor", ".git", ".venv",
+    ".next", ".turbo", "out", "__snapshots__",
+]
+
+# File patterns that generate high-entropy false positives (lock-file integrity
+# hashes, test snapshots, minified/bundled output, source maps).
+_EXCLUDE_FILE_PATTERNS = [
+    r"package-lock\.json$",
+    r"yarn\.lock$",
+    r"pnpm-lock\.yaml$",
+    r"composer\.lock$",
+    r"Cargo\.lock$",
+    r"poetry\.lock$",
+    r".*\.snap$",       # Jest snapshots
+    r".*\.min\.js$",    # minified bundles
+    r".*\.map$",        # source maps
+    r".*\.lock$",
+]
 
 
 def _gitleaks_config() -> str:
-    """A config that keeps gitleaks' default rules but allowlists dependency /
-    build directories (which otherwise flood --no-git filesystem scans)."""
-    paths = ",\n  ".join(f"'''(^|/){re.escape(d)}/'''" for d in _EXCLUDE_DIRS)
+    """Keeps gitleaks' default rules but allowlists dependency/build directories
+    and high-entropy generated files that otherwise flood --no-git scans."""
+    dir_paths = [f"(^|/){re.escape(d)}/" for d in _EXCLUDE_DIRS]
+    all_paths = dir_paths + _EXCLUDE_FILE_PATTERNS
+    paths = ",\n  ".join(f"'''{p}'''" for p in all_paths)
     return f'title = "anvil-gitleaks"\n[extend]\nuseDefault = true\n[allowlist]\npaths = [\n  {paths}\n]\n'
 
 

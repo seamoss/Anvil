@@ -7,7 +7,7 @@ fast and hermetic.
 
 from __future__ import annotations
 
-from anvil.pipelines.sast.gitleaks import GitleaksAdapter, _mask
+from anvil.pipelines.sast.gitleaks import GitleaksAdapter, _gitleaks_config, _mask
 from anvil.pipelines.sast.trivy import TrivyAdapter
 from anvil.schemas.finding import Confidence, Pipeline, Severity
 
@@ -48,6 +48,15 @@ def test_gitleaks_generic_rule_is_lower_confidence():
     generic = dict(GITLEAKS_ITEM, RuleID="generic-api-key")
     assert GitleaksAdapter()._to_finding("E", generic, "r").confidence is Confidence.MEDIUM
     assert GitleaksAdapter()._to_finding("E", GITLEAKS_ITEM, "r").confidence is Confidence.HIGH
+
+
+def test_gitleaks_config_excludes_noise_sources():
+    cfg = _gitleaks_config()
+    assert "useDefault = true" in cfg  # keep default rules
+    assert "node_modules" in cfg
+    assert "package-lock" in cfg
+    assert ".snap" in cfg
+    assert ".min.js" in cfg or "min\\.js" in cfg
 
 
 def test_mask_redacts():
