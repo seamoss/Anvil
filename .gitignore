@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Secrets & local config
+.env
+.env.*
+!.env.example
+config/authorizations/*.yaml
+!config/authorizations/example.yaml
+
+# Engagement output — evidence, audit logs, and reports are per-run artifacts.
+# They can contain sensitive findings; never commit them.
+runs/
