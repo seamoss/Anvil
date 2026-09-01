@@ -21,3 +21,6 @@ config/authorizations/*.yaml
 # Engagement output — evidence, audit logs, and reports are per-run artifacts.
 # They can contain sensitive findings; never commit them.
 runs/
+
+# macOS
+.DS_Store
