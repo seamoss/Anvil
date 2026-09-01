@@ -30,7 +30,7 @@ authorization (signed) → scope guard → SAST | DAST pipeline
 | Controller | `anvil/controller/` | scope guard, hash-chained audit log, engagement orchestrator |
 | Evidence | `anvil/evidence/` | content-addressed raw scanner output |
 | SAST | `anvil/pipelines/sast/` | Semgrep (code), gitleaks (secrets), Trivy (SCA) adapters |
-| DAST | `anvil/pipelines/dast/` | nuclei adapter, safe posture (first scanner) |
+| DAST | `anvil/pipelines/dast/` | http-checks (built-in, headers/cookies/CORS/TLS/exposure) + nuclei (safe posture) |
 | Triage | `anvil/triage/` | Claude triage + offline heuristic fallback |
 | Reporting | `anvil/reporting/` | OWASP Top 10 / SOC 2 / CVSS Markdown report |
 
@@ -84,10 +84,10 @@ requires WeasyPrint).
 
 The `Finding` schema is the spine — adding coverage is one adapter each.
 
-Done: Semgrep, gitleaks (secrets), Trivy (SCA) for SAST; nuclei for DAST.
+Done: Semgrep, gitleaks (secrets), Trivy (SCA) for SAST; http-checks
+(first-party, dependency-free) + nuclei for DAST; SARIF + HTML/PDF reports.
 Next: CodeQL / Bandit for SAST; OWASP ZAP (passive+safe) and testssl.sh for
-DAST; SARIF + HTML/PDF report renderers; per-engagement scanner policy; and
-finding diffing across runs.
+DAST; per-engagement scanner policy; and finding diffing across runs.
 
 ## Tests
 
@@ -105,7 +105,11 @@ no API cost, and they never read your real `.env.local`.
 
 ## Safety & scope
 
-- DAST runs `info`/`low`/`medium` templates with a safe tag set only — no fuzz,
+- The built-in http-checks adapter is read-only: plain GET requests inspecting
+  headers, cookies, CORS behavior, transport, and a small curated list of
+  sensitive paths (with a soft-404 baseline). It never sends an exploit payload
+  or modifies state.
+- nuclei runs `info`/`low`/`medium` templates with a safe tag set only — no fuzz,
   intrusive, DoS, or exploitation templates.
 - The scope guard re-validates each live URL (host + resolved IP) at request
   time to resist redirect/DNS-rebinding scope creep.

@@ -26,6 +26,7 @@ import yaml
 from anvil.controller.audit import AuditLog
 from anvil.controller.scope_guard import ScopeGuard, ScopeViolation
 from anvil.evidence.store import EvidenceStore
+from anvil.pipelines.dast.http_checks import HttpChecksAdapter
 from anvil.pipelines.dast.nuclei import NucleiAdapter
 from anvil.pipelines.sast.gitleaks import GitleaksAdapter
 from anvil.pipelines.sast.semgrep import SemgrepAdapter
@@ -143,6 +144,12 @@ class Engagement:
         return out
 
     # --- DAST --------------------------------------------------------------
+    @staticmethod
+    def _dast_adapters():
+        """The DAST scanner set. http-checks is first-party and always available,
+        so the live pipeline works even when nuclei isn't installed."""
+        return [HttpChecksAdapter(), NucleiAdapter()]
+
     def scan_url(self, target_url: str) -> List[Finding]:
         try:
             self.guard.check_url(target_url)
@@ -150,17 +157,31 @@ class Engagement:
             self.audit.record("scope_violation", {"target": target_url, "error": str(exc)})
             raise
 
-        adapter = NucleiAdapter()
-        if not adapter.is_available():
-            self.audit.record("scanner_unavailable", {"tool": adapter.name})
-            raise RuntimeError(
-                "nuclei is not installed. See https://github.com/projectdiscovery/nuclei "
-                "(or `brew install nuclei`) and retry."
-            )
+        adapters = self._dast_adapters()
+        if not any(a.is_available() for a in adapters):
+            names = [a.name for a in adapters]
+            self.audit.record("no_scanners_available", {"pipeline": "dast", "tried": names})
+            raise RuntimeError("No DAST scanners available: " + ", ".join(names) + ".")
 
-        self.audit.record("scan_started", {"pipeline": "dast", "tool": adapter.name, "target": target_url})
-        ref, findings = adapter.scan(self.auth.engagement_id, target_url, self.guard, self.evidence)
-        self.audit.record("scanner_completed", {"tool": adapter.name, "evidence_ref": ref, "raw_findings": len(findings)})
+        findings: List[Finding] = []
+        for adapter in adapters:
+            if not adapter.is_available():
+                self.audit.record("scanner_unavailable", {"tool": adapter.name})
+                continue
+            self.audit.record("scan_started", {"pipeline": "dast", "tool": adapter.name, "target": target_url})
+            try:
+                ref, found = adapter.scan(self.auth.engagement_id, target_url, self.guard, self.evidence)
+            except ScopeViolation as exc:  # e.g. a redirect leaving the authorized scope
+                self.audit.record("scope_violation", {"tool": adapter.name, "target": target_url, "error": str(exc)})
+                continue
+            except Exception as exc:  # a single scanner failure must not abort the run
+                self.audit.record("scanner_error", {"tool": adapter.name, "error": str(exc)})
+                continue
+            self.audit.record(
+                "scanner_completed",
+                {"tool": adapter.name, "evidence_ref": ref, "raw_findings": len(found)},
+            )
+            findings += found
 
         return self._triage_and_persist(findings)
 
