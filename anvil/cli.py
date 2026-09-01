@@ -74,9 +74,16 @@ def _run_scan(args: argparse.Namespace, kind: str) -> None:
     console.print(f"[bold]Scope:[/] {'; '.join(eng.guard.scope_summary())}")
     console.print(f"[bold]Triage:[/] {'online (Claude)' if eng.triage.online else 'offline heuristic'}")
 
+    if kind == "repo" and getattr(args, "deep_deps", False):
+        console.print(
+            "[yellow]--deep-deps:[/] dependency (SCA) findings will be sent through "
+            "LLM triage. On large dependency trees this is hundreds of extra findings "
+            "and significantly higher token consumption."
+        )
+
     try:
         if kind == "repo":
-            findings = eng.scan_repo(args.repo, logic_review=args.logic)
+            findings = eng.scan_repo(args.repo, logic_review=args.logic, deep_deps=args.deep_deps)
         else:
             findings = eng.scan_url(args.url)
     except ScopeViolation as exc:
@@ -167,6 +174,11 @@ def build_parser() -> argparse.ArgumentParser:
     sr.add_argument("--auth", required=True, help="path to signed authorization YAML")
     sr.add_argument("--repo", required=True, help="repo path (must be in scope)")
     sr.add_argument("--logic", action="store_true", help="add the LLM business-logic pass")
+    sr.add_argument(
+        "--deep-deps", action="store_true",
+        help="also send dependency (SCA/Trivy) findings through LLM triage "
+             "(default: fast-path them; --deep-deps costs many more tokens)",
+    )
     _add_output_flags(sr)
     sr.set_defaults(func=cmd_scan_repo)
 

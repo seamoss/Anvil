@@ -106,6 +106,19 @@ Return ONLY a JSON object, no prose, no markdown fences:
 # longer window (a 1h write costs more but survives longer between scans).
 _EPHEMERAL = {"type": "ephemeral"}
 
+# Findings per triage request. Bounded so each response stays valid JSON well
+# under max_tokens; the cached rubric is reused across chunks.
+_TRIAGE_CHUNK = 20
+
+# Source tools whose findings are deterministic dependency-CVE (SCA) matches —
+# fast-pathed out of LLM triage by default. Extend as SCA scanners are added.
+_SCA_TOOLS = {"trivy"}
+
+
+def _batches(seq, n):
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
+
 # Stable instruction for the business-logic pass — kept separate from the (large,
 # per-repo) source bundle so both can sit in a cached prefix and be reused across
 # repeated or multi-angle passes over the same repo.
@@ -153,14 +166,67 @@ class TriageEngine:
             self.usage[key] += getattr(u, key, 0) or 0
 
     # --- main triage pass --------------------------------------------------
-    def triage(self, findings: List[Finding]) -> List[Finding]:
+    def triage(self, findings: List[Finding], deep_deps: bool = False) -> List[Finding]:
+        """Triage findings. By default, SCA (dependency-CVE) findings are
+        fast-pathed — they are deterministic version matches that already carry
+        CVE/CVSS/CWE/remediation from the scanner, so sending them through the
+        LLM adds cost without judgment. Pass deep_deps=True to include them in
+        LLM triage anyway (dedupe/context), at higher token cost."""
         if not findings:
             return findings
         if not self.online:
             return [self._heuristic(f) for f in findings]
-        return self._llm_triage(findings)
+
+        if deep_deps:
+            return self._llm_triage(findings)
+
+        sca = [f for f in findings if self._is_sca(f)]
+        rest = [f for f in findings if not self._is_sca(f)]
+        for f in sca:
+            self._fastpath_sca(f)
+        triaged = self._llm_triage(rest) if rest else []
+        return triaged + sca
+
+    @staticmethod
+    def _is_sca(f: Finding) -> bool:
+        return f.source_tool in _SCA_TOOLS
+
+    @staticmethod
+    def _fastpath_sca(f: Finding) -> Finding:
+        # Trivy already provides severity, CVSS, CWE, OWASP (A06), and
+        # remediation. Just mark it reportable without an LLM call.
+        f.status = FindingStatus.TRIAGED
+        f.triage_note = "SCA fast-path: deterministic CVE match, not LLM-triaged (use --deep-deps to include)."
+        return f
 
     def _llm_triage(self, findings: List[Finding]) -> List[Finding]:
+        # Triage in bounded chunks: keeps each response small enough to stay
+        # valid JSON (a single huge batch truncates at max_tokens and corrupts
+        # the output), and the cached rubric is reused across chunks. If a chunk
+        # still fails to parse, that chunk degrades to the offline heuristic
+        # rather than crashing the whole engagement.
+        by_id: Dict[str, Finding] = {f.finding_id: f for f in findings}
+        for chunk in _batches(findings, _TRIAGE_CHUNK):
+            try:
+                decisions = self._triage_chunk(chunk)
+            except (json.JSONDecodeError, KeyError, ValueError, RuntimeError) as exc:
+                for f in chunk:
+                    self._heuristic(f)
+                    f.triage_note = f"Heuristic fallback (triage parse failed: {exc})."
+                continue
+            for d in decisions:
+                f = by_id.get(d.get("finding_id"))
+                if f:
+                    self._apply_decision(f, d)
+        # Safety net: anything the model didn't return a decision for stays
+        # reportable (as TRIAGED) rather than being silently dropped as NEW.
+        for f in by_id.values():
+            if f.status is FindingStatus.NEW:
+                f.status = FindingStatus.TRIAGED
+                f.triage_note = f.triage_note or "Retained for review (no explicit triage decision)."
+        return list(by_id.values())
+
+    def _triage_chunk(self, chunk: List[Finding]) -> List[dict]:
         payload = [
             {
                 "finding_id": f.finding_id,
@@ -173,9 +239,8 @@ class TriageEngine:
                 "location": f.location.as_ref(),
                 "snippet": f.location.snippet,
             }
-            for f in findings
+            for f in chunk
         ]
-
         response = self._client.messages.create(
             model=self.model,
             max_tokens=16000,
@@ -189,20 +254,12 @@ class TriageEngine:
             messages=[{"role": "user", "content": json.dumps({"findings": payload})}],
         )
         self._record_usage(response)
-        if response.stop_reason == "refusal":  # be explicit for the audit trail
+        if response.stop_reason == "refusal":
             raise RuntimeError(
                 f"Triage refused: {getattr(response.stop_details, 'explanation', '')}"
             )
         text = next((b.text for b in response.content if b.type == "text"), "")
-        decisions = self._parse_decisions(text)
-
-        by_id: Dict[str, Finding] = {f.finding_id: f for f in findings}
-        for d in decisions:
-            f = by_id.get(d.get("finding_id"))
-            if not f:
-                continue
-            self._apply_decision(f, d)
-        return list(by_id.values())
+        return self._parse_decisions(text)
 
     @staticmethod
     def _parse_decisions(text: str) -> List[dict]:

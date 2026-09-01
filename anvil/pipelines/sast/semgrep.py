@@ -30,6 +30,10 @@ _SEVERITY_MAP = {
     "INFO": Severity.LOW,
 }
 
+# Dependency / build / vendored directories we never want to scan as first-party
+# code. Shared conceptually with the other SAST adapters.
+_EXCLUDE_DIRS = ["node_modules", "dist", "build", "coverage", "vendor", ".git", ".venv"]
+
 
 class SemgrepAdapter(SastAdapter):
     binary = "semgrep"
@@ -50,6 +54,9 @@ class SemgrepAdapter(SastAdapter):
     def scan(
         self, engagement_id: str, repo_path: str, evidence: EvidenceStore
     ) -> Tuple[str, List[Finding]]:
+        excludes = []
+        for pattern in _EXCLUDE_DIRS:
+            excludes += ["--exclude", pattern]
         proc = subprocess.run(
             [
                 self.binary,
@@ -58,6 +65,7 @@ class SemgrepAdapter(SastAdapter):
                 self.config,
                 "--metrics",
                 "off",
+                *excludes,
                 repo_path,
             ],
             capture_output=True,

@@ -29,7 +29,7 @@ authorization (signed) → scope guard → SAST | DAST pipeline
 | Schemas | `anvil/schemas/` | `Finding` (the normalized spine) + `AuthorizationRecord` |
 | Controller | `anvil/controller/` | scope guard, hash-chained audit log, engagement orchestrator |
 | Evidence | `anvil/evidence/` | content-addressed raw scanner output |
-| SAST | `anvil/pipelines/sast/` | Semgrep (code), gitleaks (secrets), Trivy (SCA) adapters |
+| SAST | `anvil/pipelines/sast/` | Semgrep + Bandit + CodeQL (code), gitleaks (secrets), Trivy (SCA) adapters |
 | DAST | `anvil/pipelines/dast/` | http-checks (built-in: headers/cookies/CORS/methods/exposure/clickjacking), testssl (TLS/cert), nuclei (safe posture) |
 | Triage | `anvil/triage/` | Claude triage + offline heuristic fallback |
 | Reporting | `anvil/reporting/` | OWASP Top 10 / SOC 2 / CVSS Markdown report |
@@ -43,8 +43,8 @@ Uses [uv](https://docs.astral.sh/uv/). `uv sync` reads the pinned Python
 uv sync                             # env + deps (incl. the dev group)
 
 # Scanners (install what you need — SAST runs every one that's present):
-uv pip install semgrep              # SAST: code patterns
-brew install gitleaks trivy         # SAST: secrets + vulnerable dependencies
+uv pip install semgrep bandit       # SAST: code patterns (bandit = Python)
+brew install codeql gitleaks trivy  # SAST: deep dataflow + secrets + vulnerable deps
 brew install testssl nuclei         # DAST: TLS/cert + templates (http-checks is built-in, no install)
 
 cp .env.example .env                # then fill in ANVIL_AUTH_SIGNING_KEY (+ ANTHROPIC_API_KEY)
@@ -84,11 +84,13 @@ requires WeasyPrint).
 
 The `Finding` schema is the spine — adding coverage is one adapter each.
 
-Done: Semgrep, gitleaks (secrets), Trivy (SCA) for SAST; http-checks
-(first-party) + testssl (TLS) + nuclei for DAST; SARIF + HTML/PDF reports.
+Done: Semgrep + Bandit + CodeQL (code), gitleaks (secrets), Trivy (SCA) for
+SAST; http-checks (first-party) + testssl (TLS) + nuclei for DAST; SARIF +
+HTML/PDF reports. SCA findings fast-path around LLM triage by default
+(`--deep-deps` to include them).
 Next: authenticated DAST (deferred — session token/header, still read-only);
-CodeQL / Bandit for SAST; OWASP ZAP (passive+safe) for DAST; per-engagement
-scanner policy; and finding diffing across runs.
+OWASP ZAP (passive+safe) for DAST; per-engagement scanner policy; and finding
+diffing across runs.
 
 ## Tests
 

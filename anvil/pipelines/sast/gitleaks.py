@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from typing import List, Tuple
@@ -26,6 +27,16 @@ from anvil.schemas.finding import (
     Pipeline,
     Severity,
 )
+
+
+_EXCLUDE_DIRS = ["node_modules", "dist", "build", "coverage", "vendor", ".git", ".venv"]
+
+
+def _gitleaks_config() -> str:
+    """A config that keeps gitleaks' default rules but allowlists dependency /
+    build directories (which otherwise flood --no-git filesystem scans)."""
+    paths = ",\n  ".join(f"'''(^|/){re.escape(d)}/'''" for d in _EXCLUDE_DIRS)
+    return f'title = "anvil-gitleaks"\n[extend]\nuseDefault = true\n[allowlist]\npaths = [\n  {paths}\n]\n'
 
 
 def _mask(secret: str) -> str:
@@ -50,6 +61,9 @@ class GitleaksAdapter(SastAdapter):
     ) -> Tuple[str, List[Finding]]:
         fd, report_path = tempfile.mkstemp(suffix=".json", prefix="gitleaks_")
         os.close(fd)
+        cfd, config_path = tempfile.mkstemp(suffix=".toml", prefix="gitleaks_cfg_")
+        with os.fdopen(cfd, "w") as cf:
+            cf.write(_gitleaks_config())
         try:
             subprocess.run(
                 [
@@ -57,6 +71,7 @@ class GitleaksAdapter(SastAdapter):
                     "detect",
                     "--no-git",  # scan the filesystem, not git history
                     "--source", repo_path,
+                    "--config", config_path,  # default rules + dependency-dir allowlist
                     "--report-format", "json",
                     "--report-path", report_path,
                     "--exit-code", "0",  # don't fail the process on findings
@@ -69,10 +84,11 @@ class GitleaksAdapter(SastAdapter):
             with open(report_path, encoding="utf-8") as fh:
                 raw = fh.read() or "[]"
         finally:
-            try:
-                os.unlink(report_path)
-            except OSError:
-                pass
+            for path in (report_path, config_path):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
         ref = evidence.put(raw, label=f"gitleaks_{engagement_id}")
         try:

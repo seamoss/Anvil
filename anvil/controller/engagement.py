@@ -29,6 +29,8 @@ from anvil.evidence.store import EvidenceStore
 from anvil.pipelines.dast.http_checks import HttpChecksAdapter
 from anvil.pipelines.dast.nuclei import NucleiAdapter
 from anvil.pipelines.dast.testssl import TestSslAdapter
+from anvil.pipelines.sast.bandit import BanditAdapter
+from anvil.pipelines.sast.codeql import CodeqlAdapter
 from anvil.pipelines.sast.gitleaks import GitleaksAdapter
 from anvil.pipelines.sast.semgrep import SemgrepAdapter
 from anvil.pipelines.sast.trivy import TrivyAdapter
@@ -74,9 +76,9 @@ class Engagement:
     def _sast_adapters():
         """The SAST scanner set, in report order. Each is independent; adding a
         scanner is one entry here plus its adapter."""
-        return [SemgrepAdapter(), GitleaksAdapter(), TrivyAdapter()]
+        return [SemgrepAdapter(), BanditAdapter(), CodeqlAdapter(), GitleaksAdapter(), TrivyAdapter()]
 
-    def scan_repo(self, repo_path: str, logic_review: bool = False) -> List[Finding]:
+    def scan_repo(self, repo_path: str, logic_review: bool = False, deep_deps: bool = False) -> List[Finding]:
         try:
             self.guard.check_repo(repo_path)
         except ScopeViolation as exc:
@@ -115,7 +117,7 @@ class Engagement:
         if logic_review and self.triage.online:
             findings += self._run_logic_review(repo_path, last_ref or "")
 
-        return self._triage_and_persist(findings)
+        return self._triage_and_persist(findings, deep_deps=deep_deps)
 
     def _run_logic_review(self, repo_path: str, fallback_ref: str) -> List[Finding]:
         files = self._sample_source(repo_path)
@@ -187,9 +189,14 @@ class Engagement:
         return self._triage_and_persist(findings)
 
     # --- shared tail -------------------------------------------------------
-    def _triage_and_persist(self, findings: List[Finding]) -> List[Finding]:
-        self.audit.record("triage_started", {"count": len(findings), "online": self.triage.online})
-        triaged = self.triage.triage(findings)
+    def _triage_and_persist(self, findings: List[Finding], deep_deps: bool = False) -> List[Finding]:
+        sca_count = sum(1 for f in findings if f.source_tool in ("trivy",))
+        self.audit.record(
+            "triage_started",
+            {"count": len(findings), "online": self.triage.online,
+             "deep_deps": deep_deps, "sca_fast_pathed": 0 if deep_deps else sca_count},
+        )
+        triaged = self.triage.triage(findings, deep_deps=deep_deps)
         self.audit.record(
             "triage_completed",
             {
