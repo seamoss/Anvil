@@ -31,6 +31,10 @@ _SEVERITY_MAP = {
     "UNKNOWN": Severity.INFO,
 }
 
+# Directories to skip — duplicate/vendored lockfiles (e.g. a .claude/worktrees
+# copy of the repo) otherwise multiply the same CVEs across the tree.
+_EXCLUDE_DIRS = ["node_modules", ".claude", "dist", "build", "vendor", ".venv"]
+
 
 class TrivyAdapter(SastAdapter):
     binary = "trivy"
@@ -45,6 +49,9 @@ class TrivyAdapter(SastAdapter):
     def scan(
         self, engagement_id: str, repo_path: str, evidence: EvidenceStore
     ) -> Tuple[str, List[Finding]]:
+        skips = []
+        for pattern in _EXCLUDE_DIRS:
+            skips += ["--skip-dirs", f"**/{pattern}"]
         proc = subprocess.run(
             [
                 self.binary,
@@ -52,6 +59,7 @@ class TrivyAdapter(SastAdapter):
                 "--quiet",
                 "--format", "json",
                 "--scanners", "vuln",
+                *skips,
                 repo_path,
             ],
             capture_output=True,
