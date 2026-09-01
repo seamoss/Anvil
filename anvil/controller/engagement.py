@@ -27,7 +27,9 @@ from anvil.controller.audit import AuditLog
 from anvil.controller.scope_guard import ScopeGuard, ScopeViolation
 from anvil.evidence.store import EvidenceStore
 from anvil.pipelines.dast.nuclei import NucleiAdapter
+from anvil.pipelines.sast.gitleaks import GitleaksAdapter
 from anvil.pipelines.sast.semgrep import SemgrepAdapter
+from anvil.pipelines.sast.trivy import TrivyAdapter
 from anvil.reporting.report import ReportGenerator
 from anvil.schemas.authorization import AuthorizationRecord
 from anvil.schemas.finding import Finding
@@ -64,6 +66,12 @@ class Engagement:
         return cls(auth, runs_dir=runs_dir)
 
     # --- SAST --------------------------------------------------------------
+    @staticmethod
+    def _sast_adapters():
+        """The SAST scanner set, in report order. Each is independent; adding a
+        scanner is one entry here plus its adapter."""
+        return [SemgrepAdapter(), GitleaksAdapter(), TrivyAdapter()]
+
     def scan_repo(self, repo_path: str, logic_review: bool = False) -> List[Finding]:
         try:
             self.guard.check_repo(repo_path)
@@ -71,26 +79,48 @@ class Engagement:
             self.audit.record("scope_violation", {"target": repo_path, "error": str(exc)})
             raise
 
-        adapter = SemgrepAdapter()
-        if not adapter.is_available():
-            self.audit.record("scanner_unavailable", {"tool": adapter.name})
+        adapters = self._sast_adapters()
+        if not any(a.is_available() for a in adapters):
+            names = [a.name for a in adapters]
+            self.audit.record("no_scanners_available", {"pipeline": "sast", "tried": names})
             raise RuntimeError(
-                "semgrep is not installed. Install it with `pip install semgrep` "
-                "(or `brew install semgrep`) and retry."
+                "No SAST scanners installed. Install at least one of: "
+                + ", ".join(names)
+                + " (e.g. `uv pip install semgrep`, `brew install gitleaks trivy`)."
             )
 
-        self.audit.record("scan_started", {"pipeline": "sast", "tool": adapter.name, "target": repo_path})
-        ref, findings = adapter.scan(self.auth.engagement_id, repo_path, self.evidence)
-        self.audit.record("scanner_completed", {"tool": adapter.name, "evidence_ref": ref, "raw_findings": len(findings)})
+        findings: List[Finding] = []
+        last_ref: Optional[str] = None
+        for adapter in adapters:
+            if not adapter.is_available():
+                self.audit.record("scanner_unavailable", {"tool": adapter.name})
+                continue
+            self.audit.record("scan_started", {"pipeline": "sast", "tool": adapter.name, "target": repo_path})
+            try:
+                ref, found = adapter.scan(self.auth.engagement_id, repo_path, self.evidence)
+            except Exception as exc:  # a single scanner failure must not abort the run
+                self.audit.record("scanner_error", {"tool": adapter.name, "error": str(exc)})
+                continue
+            self.audit.record(
+                "scanner_completed",
+                {"tool": adapter.name, "evidence_ref": ref, "raw_findings": len(found)},
+            )
+            findings += found
+            last_ref = ref
 
         if logic_review and self.triage.online:
-            findings += self._run_logic_review(repo_path, ref)
+            findings += self._run_logic_review(repo_path, last_ref or "")
 
         return self._triage_and_persist(findings)
 
-    def _run_logic_review(self, repo_path: str, evidence_ref: str) -> List[Finding]:
+    def _run_logic_review(self, repo_path: str, fallback_ref: str) -> List[Finding]:
         files = self._sample_source(repo_path)
-        extra = self.triage.logic_review(self.auth.engagement_id, files, evidence_ref)
+        if files:
+            bundle = "\n\n".join(f"=== {p} ===\n{t}" for p, t in files.items())
+            ref = self.evidence.put(bundle, label=f"logic_{self.auth.engagement_id}")
+        else:
+            ref = fallback_ref
+        extra = self.triage.logic_review(self.auth.engagement_id, files, ref)
         self.audit.record("logic_review_completed", {"files_reviewed": len(files), "new_findings": len(extra)})
         return extra
 

@@ -29,7 +29,7 @@ authorization (signed) → scope guard → SAST | DAST pipeline
 | Schemas | `anvil/schemas/` | `Finding` (the normalized spine) + `AuthorizationRecord` |
 | Controller | `anvil/controller/` | scope guard, hash-chained audit log, engagement orchestrator |
 | Evidence | `anvil/evidence/` | content-addressed raw scanner output |
-| SAST | `anvil/pipelines/sast/` | Semgrep adapter (first scanner) |
+| SAST | `anvil/pipelines/sast/` | Semgrep (code), gitleaks (secrets), Trivy (SCA) adapters |
 | DAST | `anvil/pipelines/dast/` | nuclei adapter, safe posture (first scanner) |
 | Triage | `anvil/triage/` | Claude triage + offline heuristic fallback |
 | Reporting | `anvil/reporting/` | OWASP Top 10 / SOC 2 / CVSS Markdown report |
@@ -42,9 +42,10 @@ Uses [uv](https://docs.astral.sh/uv/). `uv sync` reads the pinned Python
 ```bash
 uv sync                             # env + deps (incl. the dev group)
 
-# Scanners (install what you need):
-uv pip install semgrep              # SAST
-brew install nuclei                 # DAST   (or see projectdiscovery/nuclei)
+# Scanners (install what you need — SAST runs every one that's present):
+uv pip install semgrep              # SAST: code patterns
+brew install gitleaks trivy         # SAST: secrets + vulnerable dependencies
+brew install nuclei                 # DAST  (or see projectdiscovery/nuclei)
 
 cp .env.example .env                # then fill in ANVIL_AUTH_SIGNING_KEY (+ ANTHROPIC_API_KEY)
 ```
@@ -78,10 +79,12 @@ Each run writes to `runs/<engagement_id>/`: `audit.jsonl`, `evidence/`,
 
 ## Roadmap (next scanners are just new adapters)
 
-The `Finding` schema is the spine — adding coverage is one adapter each:
-CodeQL, Bandit, gitleaks/trufflehog (secrets), Trivy/osv-scanner (SCA) for SAST;
-OWASP ZAP (passive+safe), testssl.sh for DAST. Then: PDF/SARIF report renderers,
-per-engagement scanner policy, and finding diffing across runs.
+The `Finding` schema is the spine — adding coverage is one adapter each.
+
+Done: Semgrep, gitleaks (secrets), Trivy (SCA) for SAST; nuclei for DAST.
+Next: CodeQL / Bandit for SAST; OWASP ZAP (passive+safe) and testssl.sh for
+DAST; SARIF + HTML/PDF report renderers; per-engagement scanner policy; and
+finding diffing across runs.
 
 ## Tests
 
