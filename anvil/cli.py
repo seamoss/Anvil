@@ -99,9 +99,22 @@ def _run_scan(args: argparse.Namespace, kind: str) -> None:
             f"cache read {u['cache_read_input_tokens']}[/]"
         )
 
+    outputs = []
     if args.report:
-        path = eng.write_report(findings)
-        console.print(f"[green]Report:[/] {path}")
+        outputs.append(("Markdown", eng.write_report(findings)))
+    if getattr(args, "sarif", False):
+        outputs.append(("SARIF", eng.write_sarif(findings)))
+    if getattr(args, "html", False):
+        outputs.append(("HTML", eng.write_html(findings)))
+    if getattr(args, "pdf", False):
+        try:
+            outputs.append(("PDF", eng.write_pdf(findings)))
+        except RuntimeError as exc:
+            console.print(f"[yellow]PDF skipped:[/] {exc}")
+
+    if outputs:
+        for label, path in outputs:
+            console.print(f"[green]{label}:[/] {path}")
         console.print(f"[green]Findings:[/] {eng.root / 'findings.json'}")
         console.print(f"[green]Audit log:[/] {eng.root / 'audit.jsonl'} (chain ok: {eng.audit.verify_chain()})")
 
@@ -125,6 +138,15 @@ def cmd_verify_audit(args: argparse.Namespace) -> None:
     raise SystemExit(0 if ok else 1)
 
 
+def _add_output_flags(parser: argparse.ArgumentParser) -> None:
+    """Report-format flags shared by scan-repo and scan-url. Combine freely;
+    findings.json is always written regardless."""
+    parser.add_argument("--report", action="store_true", help="write report.md (Markdown)")
+    parser.add_argument("--sarif", action="store_true", help="write results.sarif (SARIF 2.1.0)")
+    parser.add_argument("--html", action="store_true", help="write report.html (print-ready)")
+    parser.add_argument("--pdf", action="store_true", help="write report.pdf (needs WeasyPrint)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="anvil", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -145,13 +167,13 @@ def build_parser() -> argparse.ArgumentParser:
     sr.add_argument("--auth", required=True, help="path to signed authorization YAML")
     sr.add_argument("--repo", required=True, help="repo path (must be in scope)")
     sr.add_argument("--logic", action="store_true", help="add the LLM business-logic pass")
-    sr.add_argument("--report", action="store_true", help="write report.md")
+    _add_output_flags(sr)
     sr.set_defaults(func=cmd_scan_repo)
 
     su = sub.add_parser("scan-url", help="run the DAST pipeline (safe posture)")
     su.add_argument("--auth", required=True, help="path to signed authorization YAML")
     su.add_argument("--url", required=True, help="target URL (host must be in scope)")
-    su.add_argument("--report", action="store_true", help="write report.md")
+    _add_output_flags(su)
     su.set_defaults(func=cmd_scan_url)
 
     va = sub.add_parser("verify-audit", help="verify a run's hash-chained audit log")

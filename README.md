@@ -64,18 +64,21 @@ uv run anvil init-auth --engagement ACME-2026-Q3 --by you@org.com \
   --repo /path/to/checkout --domain staging.acme.example --include-subdomains \
   --out config/authorizations/acme.yaml
 
-# 2. SAST — scan a repo
-uv run anvil scan-repo --auth config/authorizations/acme.yaml --repo /path/to/checkout --logic --report
+# 2. SAST — scan a repo (choose any mix of output formats)
+uv run anvil scan-repo --auth config/authorizations/acme.yaml --repo /path/to/checkout --logic --report --sarif --html
 
 # 3. DAST — scan a live URL (safe posture)
-uv run anvil scan-url --auth config/authorizations/acme.yaml --url https://staging.acme.example --report
+uv run anvil scan-url --auth config/authorizations/acme.yaml --url https://staging.acme.example --report --sarif
 
 # 4. Verify a run's audit trail
 uv run anvil verify-audit --engagement ACME-2026-Q3
 ```
 
 Each run writes to `runs/<engagement_id>/`: `audit.jsonl`, `evidence/`,
-`findings.json`, `report.md`.
+`findings.json` (always), plus whichever reports you requested — `report.md`
+(`--report`), `results.sarif` (`--sarif`, for GitHub code scanning / CI),
+`report.html` (`--html`, print-ready → Save as PDF), and `report.pdf` (`--pdf`,
+requires WeasyPrint).
 
 ## Roadmap (next scanners are just new adapters)
 

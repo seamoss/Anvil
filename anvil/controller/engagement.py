@@ -30,7 +30,9 @@ from anvil.pipelines.dast.nuclei import NucleiAdapter
 from anvil.pipelines.sast.gitleaks import GitleaksAdapter
 from anvil.pipelines.sast.semgrep import SemgrepAdapter
 from anvil.pipelines.sast.trivy import TrivyAdapter
+from anvil.reporting.html import HtmlReporter, to_pdf
 from anvil.reporting.report import ReportGenerator
+from anvil.reporting.sarif import SarifReporter
 from anvil.schemas.authorization import AuthorizationRecord
 from anvil.schemas.finding import Finding
 from anvil.triage.engine import TriageEngine
@@ -186,5 +188,31 @@ class Engagement:
         )
         path = self.root / "report.md"
         path.write_text(report, encoding="utf-8")
-        self.audit.record("report_written", {"path": str(path), "chain_ok": self.audit.verify_chain()})
+        self.audit.record("report_written", {"format": "md", "path": str(path), "chain_ok": self.audit.verify_chain()})
+        return path
+
+    def write_sarif(self, findings: List[Finding]) -> Path:
+        sarif = SarifReporter().render_json(self.auth.engagement_id, findings)
+        path = self.root / "results.sarif"
+        path.write_text(sarif, encoding="utf-8")
+        self.audit.record("report_written", {"format": "sarif", "path": str(path)})
+        return path
+
+    def write_html(self, findings: List[Finding]) -> Path:
+        html = HtmlReporter().render(
+            self.auth.engagement_id, self.guard.scope_summary(), findings
+        )
+        path = self.root / "report.html"
+        path.write_text(html, encoding="utf-8")
+        self.audit.record("report_written", {"format": "html", "path": str(path)})
+        return path
+
+    def write_pdf(self, findings: List[Finding]) -> Path:
+        """Render a PDF (requires WeasyPrint). Raises RuntimeError with guidance
+        if it is not installed."""
+        html = HtmlReporter().render(
+            self.auth.engagement_id, self.guard.scope_summary(), findings
+        )
+        path = to_pdf(html, self.root / "report.pdf")
+        self.audit.record("report_written", {"format": "pdf", "path": str(path)})
         return path
