@@ -60,7 +60,7 @@ def test_gitleaks_config_excludes_noise_sources():
 
 
 def test_mask_redacts():
-    assert "sk_live" not in _mask("TOKENsecretvalue0000")[4:]  # only a short head kept
+    assert "secretvalue" not in _mask("TOKENsecretvalue0000")[4:]  # only a short head kept
     assert _mask("") == "[redacted]"
 
 
