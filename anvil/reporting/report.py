@@ -11,7 +11,9 @@ from datetime import datetime, timezone
 from typing import Dict, List
 
 from anvil import __version__
-from anvil.schemas.finding import Finding, FindingStatus, Severity
+from anvil.schemas.finding import Finding, FindingStatus, Priority, Reachability, Severity
+
+_PRIORITY_ORDER = [Priority.P1, Priority.P2, Priority.P3, Priority.P4]
 
 # OWASP Top-10 categories → the SOC 2 Common Criteria they most bear on. This is
 # a defensible default mapping; refine with your auditor.
@@ -76,6 +78,10 @@ class ReportGenerator:
         for sev in _SEVERITY_ORDER:
             if counts.get(sev):
                 out.append(f"- {sev.value.title()}: **{counts[sev]}**")
+        prio_counts = Counter(f.priority for f in reportable if f.priority)
+        if prio_counts:
+            parts = [f"{p.value}: {prio_counts[p]}" for p in _PRIORITY_ORDER if prio_counts.get(p)]
+            out.append(f"- Priority (risk-ranked): {', '.join(parts)}")
         local_count = sum(1 for f in reportable if f.local_only)
         if local_count:
             out.append(
@@ -121,6 +127,11 @@ class ReportGenerator:
             f"**Confidence:** {f.confidence.value}",
             f"**Source:** {f.source_tool}" + (f" ({f.rule_id})" if f.rule_id else ""),
         ]
+        if f.priority:
+            risk = f" (risk {f.risk_score})" if f.risk_score is not None else ""
+            meta.append(f"**Priority:** {f.priority.value}{risk}")
+        if f.reachability != Reachability.UNKNOWN:
+            meta.append(f"**Reachability:** {f.reachability.value}")
         if f.local_only:
             meta.append("**Scope:** 🔒 local-only (excluded from integrations)")
         if f.cwe:
@@ -133,6 +144,9 @@ class ReportGenerator:
         lines.append("")
         lines.append(f"**Location:** `{f.location.as_ref()}`")
         lines.append("")
+        if f.taint_path:
+            lines.append("**Taint path:** " + " → ".join(f"`{s}`" for s in f.taint_path))
+            lines.append("")
         if f.description:
             lines.append(f.description.strip())
             lines.append("")

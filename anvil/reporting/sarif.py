@@ -115,6 +115,9 @@ class SarifReporter:
                 "evidenceRef": f.evidence_ref,
                 "sourceTool": f.source_tool,
                 "localOnly": f.local_only,
+                "reachability": f.reachability.value,
+                "riskScore": f.risk_score,
+                "priority": f.priority.value if f.priority else None,
             },
         }
         location = self._location(f)

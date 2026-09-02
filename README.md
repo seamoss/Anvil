@@ -32,6 +32,7 @@ authorization (signed) → scope guard → SAST | DAST pipeline
 | SAST | `anvil/pipelines/sast/` | Semgrep + Bandit + CodeQL (code), gitleaks (secrets), Trivy (SCA) adapters |
 | DAST | `anvil/pipelines/dast/` | http-checks (built-in: headers/cookies/CORS/methods/exposure/clickjacking), testssl (TLS/cert), nuclei (safe posture) |
 | Triage | `anvil/triage/` | Claude triage (prompt-cached, chunked) + SCA fast-path + local-only gate + offline heuristic fallback |
+| Enrich | `anvil/enrich/` | reachability (harvested from CodeQL/semgrep flows) + contextual risk scoring → P1-P4 |
 | State | `anvil/state/` | SQLite store: cross-run diffing (new/resolved), suppressions, history |
 | Reporting | `anvil/reporting/` | OWASP Top 10 / SOC 2 / CWE + CVSS reports — Markdown, SARIF, HTML/PDF |
 
@@ -105,11 +106,13 @@ The `Finding` schema is the spine — adding coverage is one adapter each.
 Done: Semgrep + Bandit + CodeQL (code), gitleaks (secrets), Trivy (SCA) for
 SAST; http-checks (first-party) + testssl (TLS) + nuclei for DAST; SARIF +
 HTML/PDF reports; SCA fast-path (`--deep-deps` to include); local-only gate;
-persistent state with cross-run diffing + suppressions.
-Next: workflow integrations (Linear/Jira/GitHub issues, Slack — honoring the
-local-only + suppressed flags); authenticated DAST (deferred — session
-token/header, still read-only); OWASP ZAP (passive+safe); trend/burn-down
-reporting; per-engagement scanner policy.
+persistent state with cross-run diffing + suppressions; contextual risk scoring
+(reachability harvested from CodeQL/semgrep flows × asset criticality × exposure
+→ P1-P4).
+Next: LLM reachability pass for pattern findings without a proven flow (tier 2);
+entry-point mapping (tier 1); workflow integrations (Linear/Jira/GitHub issues,
+Slack — honoring local-only + suppressed); authenticated DAST (deferred); OWASP
+ZAP (passive+safe); trend/burn-down reporting.
 
 ## Tests
 

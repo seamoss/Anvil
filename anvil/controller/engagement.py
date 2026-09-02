@@ -25,6 +25,7 @@ import yaml
 
 from anvil.controller.audit import AuditLog
 from anvil.controller.scope_guard import ScopeGuard, ScopeViolation
+from anvil.enrich.risk import enrich
 from anvil.evidence.store import EvidenceStore
 from anvil.pipelines.dast.http_checks import HttpChecksAdapter
 from anvil.pipelines.dast.nuclei import NucleiAdapter
@@ -210,7 +211,9 @@ class Engagement:
             },
         )
 
-        # Apply persisted suppressions, then record the run and diff vs last time.
+        # Enrich with contextual risk (reachability harvested by the scanners ×
+        # asset criticality × exposure), then apply suppressions and record.
+        enrich(triaged, asset=self.auth.asset)
         suppressed = self.state.apply_suppressions(triaged)
         self.last_diff = self.state.record_run(self.auth.engagement_id, triaged, target=target)
         self.audit.record(

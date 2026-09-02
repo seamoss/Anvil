@@ -47,6 +47,19 @@ class Pipeline(str, Enum):
     DAST = "dast"
 
 
+class Reachability(str, Enum):
+    REACHABLE = "reachable"      # untrusted input can reach the sink (proven or judged)
+    UNREACHABLE = "unreachable"  # not reachable from an entry point
+    UNKNOWN = "unknown"          # not yet analyzed
+
+
+class Priority(str, Enum):
+    P1 = "P1"  # fix now
+    P2 = "P2"
+    P3 = "P3"
+    P4 = "P4"  # informational / defer
+
+
 class FindingStatus(str, Enum):
     """Lifecycle of a finding as it moves through triage."""
 
@@ -126,6 +139,19 @@ class Finding(BaseModel):
     # Accepted-risk / confirmed-false-positive, persisted in the state store.
     # Kept in the store and reports but excluded from "new" alerts and integrations.
     suppressed: bool = False
+
+    # --- enrichment (reachability + contextual risk) -----------------------
+    reachability: Reachability = Reachability.UNKNOWN
+    reachability_source: Optional[str] = Field(
+        None, description="codeql-flow | semgrep-trace | llm | entrypoint | none."
+    )
+    taint_path: List[str] = Field(
+        default_factory=list, description="Ordered source→sink steps, when known."
+    )
+    entry_point: Optional[str] = Field(None, description="Entry point it's reachable from.")
+    risk_score: Optional[float] = Field(None, description="0-100 composite risk.")
+    priority: Optional[Priority] = None
+    risk_rationale: Optional[str] = None
 
     discovered_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)

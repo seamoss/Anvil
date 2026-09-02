@@ -11,9 +11,28 @@ import hashlib
 import hmac
 import json
 from datetime import datetime, timezone
+from enum import Enum
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
+
+
+class Criticality(str, Enum):
+    CROWN_JEWEL = "crown-jewel"
+    STANDARD = "standard"
+    LOW = "low"
+
+
+class AssetContext(BaseModel):
+    """Business context for the target, feeding contextual risk scoring. Advisory
+    metadata — carried in the record but NOT covered by the signature, so it can
+    be tuned without re-signing (the signature protects scope + expiry)."""
+
+    criticality: Criticality = Criticality.STANDARD
+    internet_facing: Optional[bool] = None
+    data_classification: Optional[str] = Field(
+        None, description="e.g. pii | financial | internal | public"
+    )
 
 
 class Scope(BaseModel):
@@ -37,6 +56,7 @@ class AuthorizationRecord(BaseModel):
     authorized_by: str = Field(..., description="Email of the person who signed off.")
     reason: str = Field("", description="Ticket / compliance justification.")
     scope: Scope
+    asset: AssetContext = Field(default_factory=AssetContext)
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime = Field(..., description="Hard expiry; scans refuse after this.")
@@ -46,8 +66,9 @@ class AuthorizationRecord(BaseModel):
     )
 
     def _canonical_bytes(self) -> bytes:
-        """Stable serialization excluding the signature itself."""
-        payload = self.model_dump(mode="json", exclude={"signature"})
+        """Stable serialization excluding the signature and the advisory asset
+        metadata (which is not part of the scope/authorization guarantee)."""
+        payload = self.model_dump(mode="json", exclude={"signature", "asset"})
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
     def sign(self, signing_key: str) -> "AuthorizationRecord":

@@ -21,6 +21,7 @@ from anvil.schemas.finding import (
     Finding,
     Location,
     Pipeline,
+    Reachability,
     Severity,
 )
 
@@ -112,6 +113,11 @@ class SemgrepAdapter(SastAdapter):
         if isinstance(owasp, list):
             owasp = owasp[0] if owasp else None
 
+        # Semgrep taint-mode rules carry a dataflow_trace — a proven source→sink
+        # path, so those findings are reachable. Pattern rules have none.
+        taint_path = self._taint_path(extra)
+        has_flow = bool(extra.get("dataflow_trace"))
+
         return Finding(
             finding_id=Finding.make_id(
                 engagement_id, self.name, rule_id, location.as_ref()
@@ -129,4 +135,32 @@ class SemgrepAdapter(SastAdapter):
             owasp_category=owasp,
             location=location,
             evidence_ref=ref,
+            reachability=Reachability.REACHABLE if has_flow else Reachability.UNKNOWN,
+            reachability_source="semgrep-trace" if has_flow else None,
+            taint_path=taint_path,
         )
+
+    @staticmethod
+    def _taint_path(extra: dict) -> List[str]:
+        """Extract 'path:line' steps from a semgrep dataflow_trace, defensively —
+        the exact nesting varies by version, so walk it for location objects."""
+        trace = extra.get("dataflow_trace")
+        if not trace:
+            return []
+        steps: List[str] = []
+
+        def walk(obj):
+            if isinstance(obj, dict):
+                if "path" in obj and isinstance(obj.get("start"), dict):
+                    line = obj["start"].get("line")
+                    step = f"{obj['path']}:{line}" if line else str(obj["path"])
+                    if not steps or steps[-1] != step:
+                        steps.append(step)
+                for v in obj.values():
+                    walk(v)
+            elif isinstance(obj, list):
+                for v in obj:
+                    walk(v)
+
+        walk(trace)
+        return steps

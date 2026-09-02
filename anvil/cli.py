@@ -24,7 +24,12 @@ from anvil.controller.audit import AuditLog
 from anvil.controller.engagement import Engagement
 from anvil.controller.scope_guard import ScopeViolation
 from anvil.envfile import load_env
-from anvil.schemas.authorization import AuthorizationRecord, Scope
+from anvil.schemas.authorization import (
+    AssetContext,
+    AuthorizationRecord,
+    Criticality,
+    Scope,
+)
 from anvil.state.store import StateStore
 
 console = Console()
@@ -53,6 +58,11 @@ def cmd_init_auth(args: argparse.Namespace) -> None:
             domains=args.domain or [],
             include_subdomains=args.include_subdomains,
             ip_ranges=args.ip_range or [],
+        ),
+        asset=AssetContext(
+            criticality=Criticality(args.criticality),
+            internet_facing=(True if args.internet_facing else False if args.internal else None),
+            data_classification=args.data_classification or None,
         ),
     ).sign(_signing_key())
 
@@ -207,6 +217,11 @@ def build_parser() -> argparse.ArgumentParser:
     ia.add_argument("--domain", action="append", help="authorized domain (repeatable)")
     ia.add_argument("--include-subdomains", action="store_true")
     ia.add_argument("--ip-range", action="append", help="authorized CIDR (repeatable)")
+    ia.add_argument("--criticality", choices=["crown-jewel", "standard", "low"],
+                    default="standard", help="asset criticality (risk scoring)")
+    ia.add_argument("--internet-facing", action="store_true", help="asset is internet-facing")
+    ia.add_argument("--internal", action="store_true", help="asset is internal-only")
+    ia.add_argument("--data-classification", help="e.g. pii | financial | internal | public")
     ia.add_argument("--out", required=True, help="output YAML path")
     ia.set_defaults(func=cmd_init_auth)
 

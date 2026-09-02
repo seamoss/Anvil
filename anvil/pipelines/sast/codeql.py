@@ -28,6 +28,7 @@ from anvil.schemas.finding import (
     Finding,
     Location,
     Pipeline,
+    Reachability,
     Severity,
 )
 
@@ -145,6 +146,11 @@ class CodeqlAdapter(SastAdapter):
         title = (rule.get("shortDescription", {}) or {}).get("text") or props.get("name") or rule_id
         message = (result.get("message", {}) or {}).get("text", "")
 
+        # CodeQL's codeFlows are a proven source→sink taint path: reachable by
+        # construction. Harvest the path for free (no LLM needed).
+        taint_path = self._taint_path(result)
+        reachability = Reachability.REACHABLE if taint_path else Reachability.UNKNOWN
+
         return Finding(
             finding_id=Finding.make_id(engagement_id, self.name, rule_id, location.as_ref()),
             engagement_id=engagement_id,
@@ -159,7 +165,28 @@ class CodeqlAdapter(SastAdapter):
             cwe=cwe,
             location=location,
             evidence_ref=ref,
+            reachability=reachability,
+            reachability_source="codeql-flow" if taint_path else None,
+            taint_path=taint_path,
         )
+
+    @staticmethod
+    def _taint_path(result: dict) -> List[str]:
+        """Flatten the first codeFlow's thread-flow into ordered 'uri:line' steps."""
+        flows = result.get("codeFlows") or []
+        if not flows:
+            return []
+        thread_flows = flows[0].get("threadFlows") or []
+        if not thread_flows:
+            return []
+        steps = []
+        for tfl in thread_flows[0].get("locations", []):
+            phys = (tfl.get("location", {}) or {}).get("physicalLocation", {})
+            uri = phys.get("artifactLocation", {}).get("uri")
+            line = (phys.get("region", {}) or {}).get("startLine")
+            if uri:
+                steps.append(f"{uri}:{line}" if line else uri)
+        return steps
 
     @staticmethod
     def _cwes(tags: List[str]) -> List[str]:

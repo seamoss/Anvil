@@ -16,7 +16,10 @@ from typing import List
 
 from anvil import __version__
 from anvil.reporting.report import _OWASP_TO_SOC2
-from anvil.schemas.finding import Finding, FindingStatus, Severity
+from anvil.schemas.finding import Finding, FindingStatus, Priority, Reachability, Severity
+
+_PRIORITY_ORDER = [Priority.P1, Priority.P2, Priority.P3, Priority.P4]
+_PRIORITY_COLOR = {Priority.P1: "#b3123b", Priority.P2: "#d1442f", Priority.P3: "#c07a00", Priority.P4: "#5a6472"}
 
 _SEVERITY_ORDER = [
     Severity.CRITICAL,
@@ -101,6 +104,17 @@ class HtmlReporter:
                 )
         p.append("</div>")
 
+        prio_counts = Counter(f.priority for f in reportable if f.priority)
+        if prio_counts:
+            p.append('<div class="chips">')
+            for pr in _PRIORITY_ORDER:
+                if prio_counts.get(pr):
+                    p.append(
+                        f'<span class="chip" style="background:{_PRIORITY_COLOR[pr]}">'
+                        f"{prio_counts[pr]} {pr.value}</span>"
+                    )
+            p.append("</div>")
+
         local_count = sum(1 for f in reportable if f.local_only)
         if local_count:
             p.append(
@@ -142,6 +156,12 @@ class HtmlReporter:
     def _card(self, f: Finding, new_ids=frozenset()) -> str:
         color = _SEV_COLOR[f.severity]
         badges = [f'<span class="badge sev" style="background:{color}">{escape(f.severity.value)}</span>']
+        if f.priority:
+            pc = _PRIORITY_COLOR[f.priority]
+            risk = f" · {f.risk_score}" if f.risk_score is not None else ""
+            badges.append(f'<span class="badge sev" style="background:{pc}">{escape(f.priority.value)}{risk}</span>')
+        if f.reachability != Reachability.UNKNOWN:
+            badges.append(f'<span class="badge">reachability: {escape(f.reachability.value)}</span>')
         if f.finding_id in new_ids:
             badges.append('<span class="badge new">🆕 new</span>')
         if f.suppressed:
@@ -163,6 +183,9 @@ class HtmlReporter:
         parts.append(f'<div class="fid">{escape(f.finding_id)}</div>')
         parts.append('<div class="badges">' + "".join(badges) + "</div>")
         parts.append(f'<div>Location: <span class="loc">{escape(f.location.as_ref())}</span></div>')
+        if f.taint_path:
+            path = " → ".join(f'<span class="loc">{escape(s)}</span>' for s in f.taint_path)
+            parts.append(f'<div class="rem">Taint path: {path}</div>')
         if f.description:
             parts.append(f"<p>{escape(f.description)}</p>")
         if f.remediation:
