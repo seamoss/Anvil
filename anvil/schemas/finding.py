@@ -47,6 +47,11 @@ class Pipeline(str, Enum):
     DAST = "dast"
 
 
+# Source tools that produce dependency (SCA) findings — reported in their own
+# lane, not intermixed with the risk-ranked first-party findings.
+DEPENDENCY_TOOLS = {"trivy", "osv", "trivy-license"}
+
+
 class Reachability(str, Enum):
     REACHABLE = "reachable"      # untrusted input can reach the sink (proven or judged)
     UNREACHABLE = "unreachable"  # not reachable from an entry point
@@ -152,6 +157,17 @@ class Finding(BaseModel):
     risk_score: Optional[float] = Field(None, description="0-100 composite risk.")
     priority: Optional[Priority] = None
     risk_rationale: Optional[str] = None
+
+    # For dependency (SCA) findings: the affected package, e.g. "flask@0.12.2".
+    component: Optional[str] = None
+
+    @property
+    def is_dependency(self) -> bool:
+        return self.source_tool in DEPENDENCY_TOOLS
+
+    @property
+    def is_license(self) -> bool:
+        return self.source_tool == "trivy-license"
 
     discovered_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)

@@ -111,9 +111,9 @@ _EPHEMERAL = {"type": "ephemeral"}
 # under max_tokens; the cached rubric is reused across chunks.
 _TRIAGE_CHUNK = 20
 
-# Source tools whose findings are deterministic dependency-CVE (SCA) matches —
+# Source tools whose findings are deterministic dependency (SCA) matches —
 # fast-pathed out of LLM triage by default. Extend as SCA scanners are added.
-_SCA_TOOLS = {"trivy"}
+_SCA_TOOLS = {"trivy", "osv", "trivy-license"}
 
 
 def _batches(seq, n):

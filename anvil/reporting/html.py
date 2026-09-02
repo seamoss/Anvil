@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import List
 
 from anvil import __version__
+from anvil.reporting.deps import html_section as _deps_html_section
 from anvil.reporting.report import _OWASP_TO_SOC2
 from anvil.schemas.finding import Finding, FindingStatus, Priority, Reachability, Severity
 
@@ -81,9 +82,11 @@ class HtmlReporter:
             f for f in findings
             if f.status in (FindingStatus.CONFIRMED, FindingStatus.TRIAGED)
         ]
-        reportable.sort(key=lambda f: (f.severity.rank, f.title))
+        code = [f for f in reportable if not f.is_dependency]
+        deps = [f for f in reportable if f.is_dependency]
+        code.sort(key=lambda f: (f.severity.rank, f.title))
         new_ids = set(diff.new) if diff is not None else set()
-        counts = Counter(f.severity for f in reportable)
+        counts = Counter(f.severity for f in code)
         excluded = sum(1 for f in findings if f.status == FindingStatus.FALSE_POSITIVE)
         dupes = sum(1 for f in findings if f.status == FindingStatus.DUPLICATE)
 
@@ -91,7 +94,8 @@ class HtmlReporter:
         p.append(f"<h1>Security Assessment — {escape(engagement_id)}</h1>")
         p.append(
             f'<p class="sub">Generated {datetime.now(timezone.utc).isoformat()} UTC by Anvil · '
-            f"{len(reportable)} findings ({excluded} false positives, {dupes} duplicates removed)</p>"
+            f"{len(code)} first-party + {len(deps)} dependency findings "
+            f"({excluded} false positives, {dupes} duplicates removed)</p>"
         )
 
         # severity chips
@@ -104,7 +108,7 @@ class HtmlReporter:
                 )
         p.append("</div>")
 
-        prio_counts = Counter(f.priority for f in reportable if f.priority)
+        prio_counts = Counter(f.priority for f in code if f.priority)
         if prio_counts:
             p.append('<div class="chips">')
             for pr in _PRIORITY_ORDER:
@@ -133,14 +137,15 @@ class HtmlReporter:
             p.append(f"<li>{escape(line)}</li>")
         p.append("</ul>")
 
-        # findings
-        p.append("<h2>Findings</h2>")
+        # first-party findings
+        p.append("<h2>First-Party Findings</h2>")
         for sev in _SEVERITY_ORDER:
-            group = [f for f in reportable if f.severity == sev]
+            group = [f for f in code if f.severity == sev]
             for f in group:
                 p.append(self._card(f, new_ids))
 
-        p.append(self._matrix(reportable))
+        p.append(_deps_html_section(deps))
+        p.append(self._matrix(code))
         p.append(
             "<footer>All findings trace to raw scanner output in the engagement "
             "evidence store; the run's audit log is hash-chained and verifiable."

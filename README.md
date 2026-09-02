@@ -29,7 +29,7 @@ authorization (signed) → scope guard → SAST | DAST pipeline
 | Schemas | `anvil/schemas/` | `Finding` (the normalized spine) + `AuthorizationRecord` |
 | Controller | `anvil/controller/` | scope guard, hash-chained audit log, engagement orchestrator |
 | Evidence | `anvil/evidence/` | content-addressed raw scanner output |
-| SAST | `anvil/pipelines/sast/` | Semgrep + Bandit + CodeQL (code), gitleaks (secrets), Trivy (SCA) adapters |
+| SAST | `anvil/pipelines/sast/` | Semgrep + Bandit + CodeQL (code), gitleaks (secrets), Trivy + OSV-Scanner (dependency CVEs, dual-source) + Trivy licenses |
 | DAST | `anvil/pipelines/dast/` | http-checks (built-in: headers/cookies/CORS/methods/exposure/clickjacking), testssl (TLS/cert), nuclei (safe posture) |
 | Triage | `anvil/triage/` | Claude triage (prompt-cached, chunked) + SCA fast-path + local-only gate + offline heuristic fallback |
 | Enrich | `anvil/enrich/` | reachability (harvested from CodeQL/semgrep flows) + contextual risk scoring → P1-P4 |
@@ -45,8 +45,8 @@ Uses [uv](https://docs.astral.sh/uv/). `uv sync` reads the pinned Python
 uv sync                             # env + deps (incl. the dev group)
 
 # Scanners (install what you need — SAST runs every one that's present):
-uv pip install semgrep bandit       # SAST: code patterns (bandit = Python)
-brew install codeql gitleaks trivy  # SAST: deep dataflow + secrets + vulnerable deps
+uv pip install semgrep bandit          # SAST: code patterns (bandit = Python)
+brew install codeql gitleaks trivy osv-scanner  # SAST: dataflow + secrets + deps (dual-source)
 brew install testssl nuclei         # DAST: TLS/cert + templates (http-checks is built-in, no install)
 
 cp .env.example .env                # then fill in ANVIL_AUTH_SIGNING_KEY (+ ANTHROPIC_API_KEY)
@@ -109,6 +109,9 @@ HTML/PDF reports; SCA fast-path (`--deep-deps` to include); local-only gate;
 persistent state with cross-run diffing + suppressions; contextual risk scoring
 (reachability harvested from CodeQL/semgrep flows × asset criticality × exposure
 → P1-P4).
+Dependency findings render in their own lane (dual-source CVEs deduped across
+Trivy + OSV, plus license concerns), separate from the risk-ranked first-party
+findings.
 Next: LLM reachability pass for pattern findings without a proven flow (tier 2);
 entry-point mapping (tier 1); workflow integrations (Linear/Jira/GitHub issues,
 Slack — honoring local-only + suppressed); authenticated DAST (deferred); OWASP

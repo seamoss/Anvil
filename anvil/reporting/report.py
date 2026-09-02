@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Dict, List
 
 from anvil import __version__
+from anvil.reporting.deps import markdown_section as _deps_section
 from anvil.schemas.finding import Finding, FindingStatus, Priority, Reachability, Severity
 
 _PRIORITY_ORDER = [Priority.P1, Priority.P2, Priority.P3, Priority.P4]
@@ -49,10 +50,12 @@ class ReportGenerator:
             for f in findings
             if f.status in (FindingStatus.CONFIRMED, FindingStatus.TRIAGED)
         ]
-        reportable.sort(key=lambda f: (f.severity.rank, f.title))
+        code = [f for f in reportable if not f.is_dependency]
+        deps = [f for f in reportable if f.is_dependency]
+        code.sort(key=lambda f: (f.severity.rank, f.title))
         new_ids = set(diff.new) if diff is not None else set()
 
-        counts = Counter(f.severity for f in reportable)
+        counts = Counter(f.severity for f in code)
         excluded = [f for f in findings if f.status == FindingStatus.FALSE_POSITIVE]
         dupes = [f for f in findings if f.status == FindingStatus.DUPLICATE]
 
@@ -71,14 +74,13 @@ class ReportGenerator:
         out.append("## Executive Summary")
         out.append("")
         out.append(
-            f"- **{len(reportable)}** findings to report "
-            f"({len(excluded)} triaged out as false positives, "
-            f"{len(dupes)} merged as duplicates)."
+            f"- **{len(code)}** first-party finding(s) + **{len(deps)}** dependency "
+            f"finding(s) ({len(excluded)} false positives, {len(dupes)} duplicates removed)."
         )
         for sev in _SEVERITY_ORDER:
             if counts.get(sev):
-                out.append(f"- {sev.value.title()}: **{counts[sev]}**")
-        prio_counts = Counter(f.priority for f in reportable if f.priority)
+                out.append(f"- {sev.value.title()} (first-party): **{counts[sev]}**")
+        prio_counts = Counter(f.priority for f in code if f.priority)
         if prio_counts:
             parts = [f"{p.value}: {prio_counts[p]}" for p in _PRIORITY_ORDER if prio_counts.get(p)]
             out.append(f"- Priority (risk-ranked): {', '.join(parts)}")
@@ -98,10 +100,10 @@ class ReportGenerator:
             )
         out.append("")
 
-        out.append("## Findings by Severity")
+        out.append("## First-Party Findings")
         out.append("")
         for sev in _SEVERITY_ORDER:
-            group = [f for f in reportable if f.severity == sev]
+            group = [f for f in code if f.severity == sev]
             if not group:
                 continue
             out.append(f"### {sev.value.upper()}")
@@ -110,7 +112,11 @@ class ReportGenerator:
                 out.extend(self._render_finding(f, new_ids))
             out.append("")
 
-        out.append(self._compliance_matrix(reportable))
+        deps_section = _deps_section(deps)
+        if deps_section:
+            out.append(deps_section)
+
+        out.append(self._compliance_matrix(code))
         out.append(self._audit_footer())
         return "\n".join(out)
 

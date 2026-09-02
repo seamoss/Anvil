@@ -33,6 +33,7 @@ from anvil.pipelines.dast.testssl import TestSslAdapter
 from anvil.pipelines.sast.bandit import BanditAdapter
 from anvil.pipelines.sast.codeql import CodeqlAdapter
 from anvil.pipelines.sast.gitleaks import GitleaksAdapter
+from anvil.pipelines.sast.osv import OsvScannerAdapter
 from anvil.pipelines.sast.semgrep import SemgrepAdapter
 from anvil.pipelines.sast.trivy import TrivyAdapter
 from anvil.reporting.html import HtmlReporter, to_pdf
@@ -80,7 +81,8 @@ class Engagement:
     def _sast_adapters():
         """The SAST scanner set, in report order. Each is independent; adding a
         scanner is one entry here plus its adapter."""
-        return [SemgrepAdapter(), BanditAdapter(), CodeqlAdapter(), GitleaksAdapter(), TrivyAdapter()]
+        return [SemgrepAdapter(), BanditAdapter(), CodeqlAdapter(), GitleaksAdapter(),
+                TrivyAdapter(), OsvScannerAdapter()]
 
     def scan_repo(self, repo_path: str, logic_review: bool = False, deep_deps: bool = False) -> List[Finding]:
         try:

@@ -39,8 +39,9 @@ _EXCLUDE_DIRS = ["node_modules", ".claude", "dist", "build", "vendor", ".venv"]
 class TrivyAdapter(SastAdapter):
     binary = "trivy"
 
-    def __init__(self, timeout: int = 900):
+    def __init__(self, timeout: int = 900, licenses: bool = True):
         self.timeout = timeout
+        self.licenses = licenses
 
     @property
     def name(self) -> str:
@@ -52,13 +53,14 @@ class TrivyAdapter(SastAdapter):
         skips = []
         for pattern in _EXCLUDE_DIRS:
             skips += ["--skip-dirs", f"**/{pattern}"]
+        scanners = "vuln,license" if self.licenses else "vuln"
         proc = subprocess.run(
             [
                 self.binary,
                 "fs",
                 "--quiet",
                 "--format", "json",
-                "--scanners", "vuln",
+                "--scanners", scanners,
                 *skips,
                 repo_path,
             ],
@@ -81,7 +83,35 @@ class TrivyAdapter(SastAdapter):
             target = result.get("Target", "")
             for vuln in result.get("Vulnerabilities") or []:
                 findings.append(self._to_finding(engagement_id, target, vuln, ref))
+            for lic in result.get("Licenses") or []:
+                findings.append(self._license_finding(engagement_id, target, lic, ref))
         return ref, findings
+
+    def _license_finding(self, engagement_id, target, lic, ref) -> Finding:
+        name = lic.get("Name", "unknown")
+        pkg = lic.get("PkgName", "")
+        category = (lic.get("Category") or "").lower()
+        file_path = lic.get("FilePath") or target
+        subject = f" in {pkg}" if pkg else ""
+        return Finding(
+            finding_id=Finding.make_id(
+                engagement_id, "trivy-license", name, f"{pkg}:{file_path}"
+            ),
+            engagement_id=engagement_id,
+            pipeline=Pipeline.SAST,
+            source_tool="trivy-license",  # distinct source → dependency lane, license sub-table
+            rule_id=name,
+            title=f"License: {name}" + (f" ({category})" if category else "") + subject,
+            description=f"{pkg or 'A component'} uses a {category or 'flagged'} license ({name}).",
+            remediation="Confirm this license is compatible with your distribution/usage policy.",
+            severity=_SEVERITY_MAP.get(lic.get("Severity", "UNKNOWN"), Severity.INFO),
+            confidence=Confidence.HIGH,
+            cwe=[],
+            owasp_category=None,
+            location=Location(file_path=file_path),
+            evidence_ref=ref,
+            component=pkg or None,
+        )
 
     @staticmethod
     def _cvss(vuln: dict) -> Tuple[Optional[float], Optional[str]]:
@@ -126,4 +156,5 @@ class TrivyAdapter(SastAdapter):
             cvss_vector=vector,
             location=location,
             evidence_ref=ref,
+            component=f"{pkg}@{installed}",
         )
