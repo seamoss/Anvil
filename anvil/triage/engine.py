@@ -28,6 +28,7 @@ from anvil.schemas.finding import (
     Pipeline,
     Severity,
 )
+from anvil.triage.local_gate import classify
 
 MODEL = "claude-opus-5"
 
@@ -174,18 +175,21 @@ class TriageEngine:
         LLM triage anyway (dedupe/context), at higher token cost."""
         if not findings:
             return findings
+
         if not self.online:
-            return [self._heuristic(f) for f in findings]
+            result = [self._heuristic(f) for f in findings]
+        elif deep_deps:
+            result = self._llm_triage(findings)
+        else:
+            sca = [f for f in findings if self._is_sca(f)]
+            rest = [f for f in findings if not self._is_sca(f)]
+            for f in sca:
+                self._fastpath_sca(f)
+            result = (self._llm_triage(rest) if rest else []) + sca
 
-        if deep_deps:
-            return self._llm_triage(findings)
-
-        sca = [f for f in findings if self._is_sca(f)]
-        rest = [f for f in findings if not self._is_sca(f)]
-        for f in sca:
-            self._fastpath_sca(f)
-        triaged = self._llm_triage(rest) if rest else []
-        return triaged + sca
+        # Flag local/dev-only findings (still reported; excluded from integrations).
+        classify(result)
+        return result
 
     @staticmethod
     def _is_sca(f: Finding) -> bool:

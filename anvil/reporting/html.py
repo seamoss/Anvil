@@ -50,6 +50,7 @@ h2 { font-size: 1.15rem; margin: 2rem 0 .75rem; border-bottom: 2px solid var(--l
 .badges { display: flex; flex-wrap: wrap; gap: .4rem; margin: .4rem 0 .7rem; }
 .badge { font-size: .72rem; background: #eceef1; color: #333; border-radius: 5px; padding: .12rem .5rem; }
 .badge.sev { color: #fff; }
+.badge.local { background: #ede7ff; color: #5b3fa8; font-weight: 600; }
 .loc { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem;
        background: #eceef1; padding: .12rem .4rem; border-radius: 4px; }
 .fid { color: var(--muted); font-family: ui-monospace, monospace; font-size: .75rem; }
@@ -96,6 +97,13 @@ class HtmlReporter:
                 )
         p.append("</div>")
 
+        local_count = sum(1 for f in reportable if f.local_only)
+        if local_count:
+            p.append(
+                f'<p class="sub">🔒 {local_count} local-only finding(s) — reported here, '
+                "excluded from workflow integrations.</p>"
+            )
+
         # scope
         p.append("<h2>Scope</h2><ul>")
         for line in scope_summary:
@@ -125,6 +133,8 @@ class HtmlReporter:
     def _card(self, f: Finding) -> str:
         color = _SEV_COLOR[f.severity]
         badges = [f'<span class="badge sev" style="background:{color}">{escape(f.severity.value)}</span>']
+        if f.local_only:
+            badges.append('<span class="badge local">🔒 local-only</span>')
         badges.append(f'<span class="badge">confidence: {escape(f.confidence.value)}</span>')
         src = f.source_tool + (f" · {f.rule_id}" if f.rule_id else "")
         badges.append(f'<span class="badge">{escape(src)}</span>')

@@ -114,6 +114,7 @@ class SarifReporter:
                 "cvssVector": f.cvss_vector,
                 "evidenceRef": f.evidence_ref,
                 "sourceTool": f.source_tool,
+                "localOnly": f.local_only,
             },
         }
         location = self._location(f)

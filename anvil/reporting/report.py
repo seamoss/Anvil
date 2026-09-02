@@ -74,6 +74,12 @@ class ReportGenerator:
         for sev in _SEVERITY_ORDER:
             if counts.get(sev):
                 out.append(f"- {sev.value.title()}: **{counts[sev]}**")
+        local_count = sum(1 for f in reportable if f.local_only)
+        if local_count:
+            out.append(
+                f"- Local-only: **{local_count}** (reported here; excluded from "
+                "workflow integrations)"
+            )
         out.append("")
 
         out.append("## Findings by Severity")
@@ -100,6 +106,8 @@ class ReportGenerator:
             f"**Confidence:** {f.confidence.value}",
             f"**Source:** {f.source_tool}" + (f" ({f.rule_id})" if f.rule_id else ""),
         ]
+        if f.local_only:
+            meta.append("**Scope:** 🔒 local-only (excluded from integrations)")
         if f.cwe:
             meta.append(f"**CWE:** {', '.join(f.cwe)}")
         if f.owasp_category:

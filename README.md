@@ -74,6 +74,11 @@ uv run anvil scan-url --auth config/authorizations/acme.yaml --url https://stagi
 uv run anvil verify-audit --engagement ACME-2026-Q3
 ```
 
+Findings in local/dev-only artifacts (`.env.local`, `local.log`, loopback URLs,
+`docker-compose.override.yml`, …) are tagged **local-only**: reported with full
+severity, but flagged so workflow integrations (tickets, alerts, PR comments)
+can exclude them — dev-environment noise shouldn't page production owners.
+
 Each run writes to `runs/<engagement_id>/`: `audit.jsonl`, `evidence/`,
 `findings.json` (always), plus whichever reports you requested — `report.md`
 (`--report`), `results.sarif` (`--sarif`, for GitHub code scanning / CI),

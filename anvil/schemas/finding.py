@@ -118,6 +118,11 @@ class Finding(BaseModel):
     triage_note: Optional[str] = Field(None, description="Why triage set this status.")
     duplicate_of: Optional[str] = Field(None, description="finding_id it merged into.")
 
+    # A local/dev-environment finding (local config, dev secret, loopback URL).
+    # Still reported with full severity, but excluded from workflow integrations
+    # (tickets, alerts, PR comments) so dev noise doesn't page production owners.
+    local_only: bool = False
+
     discovered_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
