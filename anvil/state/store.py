@@ -103,10 +103,14 @@ class StateStore:
             )
         }
 
+        # Dedupe within the run: a finding_id is one logical finding, but the
+        # same id can appear more than once (e.g. the same dependency CVE in two
+        # lockfiles keys on package@version, not path).
+        unique = {f.finding_id: f for f in reportable}
+
         diff = RunDiff(run_id=run_id)
         current_ids = set()
-        for f in reportable:
-            fid = f.finding_id
+        for fid, f in unique.items():
             current_ids.add(fid)
             prev = existing.get(fid)
             if prev is None:

@@ -72,6 +72,16 @@ def test_only_reportable_findings_tracked(store):
     assert diff.new == ["a"]  # false positive not tracked
 
 
+def test_duplicate_finding_ids_in_one_run(store):
+    # Same finding_id twice in a run (e.g. one CVE across two lockfiles) must not
+    # crash on the UNIQUE constraint — it's one logical finding.
+    a1, a2 = mk("dup"), mk("dup")
+    diff = store.record_run("E", [a1, a2])
+    assert diff.new == ["dup"]
+    # and a clean re-run still recognizes it as existing, not new
+    assert store.record_run("E", [mk("dup")]).existing == ["dup"]
+
+
 def test_engagements_are_isolated(store):
     store.record_run("E", [mk("a")])
     diff = store.record_run("OTHER", [mk("a")])
