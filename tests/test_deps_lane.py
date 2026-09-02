@@ -32,6 +32,19 @@ def lic(name="GPL-3.0", pkg="somepkg", severity=Severity.HIGH):
 
 
 # --- license finding -------------------------------------------------------
+def test_trivy_license_filter_drops_permissive():
+    # Only restricted/reciprocal (MEDIUM+) licenses are surfaced; MIT/ISC noise is dropped.
+    data = {"Results": [{"Target": "package-lock.json", "Licenses": [
+        {"Severity": "LOW", "Category": "notice", "Name": "MIT", "PkgName": "a"},
+        {"Severity": "UNKNOWN", "Category": "unknown", "Name": "ISC", "PkgName": "b"},
+        {"Severity": "MEDIUM", "Category": "reciprocal", "Name": "MPL-2.0", "PkgName": "c"},
+        {"Severity": "HIGH", "Category": "restricted", "Name": "GPL-3.0", "PkgName": "d"},
+    ]}]}
+    findings = TrivyAdapter().parse("E", data, "ref")
+    names = sorted(f.rule_id for f in findings)
+    assert names == ["GPL-3.0", "MPL-2.0"]  # MIT / ISC dropped
+
+
 def test_license_finding_is_distinct_source():
     f = lic()
     assert f.source_tool == "trivy-license"

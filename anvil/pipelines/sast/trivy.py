@@ -78,14 +78,21 @@ class TrivyAdapter(SastAdapter):
                 f"trivy did not return JSON (exit {proc.returncode}): {proc.stderr[:500]}"
             ) from exc
 
+        return ref, self.parse(engagement_id, data, ref)
+
+    def parse(self, engagement_id: str, data: dict, ref: str) -> List[Finding]:
         findings: List[Finding] = []
         for result in data.get("Results") or []:
             target = result.get("Target", "")
             for vuln in result.get("Vulnerabilities") or []:
                 findings.append(self._to_finding(engagement_id, target, vuln, ref))
             for lic in result.get("Licenses") or []:
-                findings.append(self._license_finding(engagement_id, target, lic, ref))
-        return ref, findings
+                # Trivy lists every license; only surface the risky ones
+                # (restricted/reciprocal → MEDIUM+). Permissive licenses (MIT,
+                # ISC, …) come back LOW/UNKNOWN and are pure noise.
+                if lic.get("Severity", "").upper() in ("MEDIUM", "HIGH", "CRITICAL"):
+                    findings.append(self._license_finding(engagement_id, target, lic, ref))
+        return findings
 
     def _license_finding(self, engagement_id, target, lic, ref) -> Finding:
         name = lic.get("Name", "unknown")
