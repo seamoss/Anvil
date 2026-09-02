@@ -123,6 +123,10 @@ class Finding(BaseModel):
     # (tickets, alerts, PR comments) so dev noise doesn't page production owners.
     local_only: bool = False
 
+    # Accepted-risk / confirmed-false-positive, persisted in the state store.
+    # Kept in the store and reports but excluded from "new" alerts and integrations.
+    suppressed: bool = False
+
     discovered_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )

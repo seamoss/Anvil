@@ -40,6 +40,7 @@ class ReportGenerator:
         engagement_id: str,
         scope_summary: List[str],
         findings: List[Finding],
+        diff=None,
     ) -> str:
         reportable = [
             f
@@ -47,6 +48,7 @@ class ReportGenerator:
             if f.status in (FindingStatus.CONFIRMED, FindingStatus.TRIAGED)
         ]
         reportable.sort(key=lambda f: (f.severity.rank, f.title))
+        new_ids = set(diff.new) if diff is not None else set()
 
         counts = Counter(f.severity for f in reportable)
         excluded = [f for f in findings if f.status == FindingStatus.FALSE_POSITIVE]
@@ -80,6 +82,14 @@ class ReportGenerator:
                 f"- Local-only: **{local_count}** (reported here; excluded from "
                 "workflow integrations)"
             )
+        suppressed_count = sum(1 for f in reportable if f.suppressed)
+        if suppressed_count:
+            out.append(f"- Suppressed (accepted-risk / FP): **{suppressed_count}**")
+        if diff is not None and not diff.is_first_run:
+            out.append(
+                f"- Since last scan: **{len(diff.new)}** new, "
+                f"**{len(diff.resolved)}** resolved"
+            )
         out.append("")
 
         out.append("## Findings by Severity")
@@ -91,15 +101,20 @@ class ReportGenerator:
             out.append(f"### {sev.value.upper()}")
             out.append("")
             for f in group:
-                out.extend(self._render_finding(f))
+                out.extend(self._render_finding(f, new_ids))
             out.append("")
 
         out.append(self._compliance_matrix(reportable))
         out.append(self._audit_footer())
         return "\n".join(out)
 
-    def _render_finding(self, f: Finding) -> List[str]:
-        lines = [f"#### {f.title}  \n`{f.finding_id}`"]
+    def _render_finding(self, f: Finding, new_ids=frozenset()) -> List[str]:
+        tags = ""
+        if f.finding_id in new_ids:
+            tags += " 🆕"
+        if f.suppressed:
+            tags += " · _suppressed_"
+        lines = [f"#### {f.title}{tags}  \n`{f.finding_id}`"]
         lines.append("")
         meta = [
             f"**Severity:** {f.severity.value}",

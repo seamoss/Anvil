@@ -25,8 +25,10 @@ from anvil.controller.engagement import Engagement
 from anvil.controller.scope_guard import ScopeViolation
 from anvil.envfile import load_env
 from anvil.schemas.authorization import AuthorizationRecord, Scope
+from anvil.state.store import StateStore
 
 console = Console()
+DEFAULT_DB = "runs/anvil.db"
 
 
 def _signing_key() -> str:
@@ -97,6 +99,9 @@ def _run_scan(args: argparse.Namespace, kind: str) -> None:
     console.print(
         f"[green]Done.[/] {len(findings)} raw finding(s), {len(reportable)} to report."
     )
+    if eng.last_diff is not None and not eng.last_diff.is_first_run:
+        d = eng.last_diff
+        console.print(f"[bold]Since last scan:[/] {len(d.new)} new, {len(d.resolved)} resolved")
 
     if eng.triage.online:
         u = eng.triage.usage
@@ -145,6 +150,41 @@ def cmd_verify_audit(args: argparse.Namespace) -> None:
     raise SystemExit(0 if ok else 1)
 
 
+def cmd_suppress(args: argparse.Namespace) -> None:
+    store = StateStore(args.db)
+    scope, value = ("finding_id", args.finding_id) if args.finding_id else ("rule_id", args.rule_id)
+    store.add_suppression(scope, value, reason=args.reason, by=os.environ.get("USER"))
+    console.print(f"[green]Suppressed[/] {scope}={value}"
+                  + (f" — {args.reason}" if args.reason else ""))
+
+
+def cmd_unsuppress(args: argparse.Namespace) -> None:
+    store = StateStore(args.db)
+    scope, value = ("finding_id", args.finding_id) if args.finding_id else ("rule_id", args.rule_id)
+    store.remove_suppression(scope, value)
+    console.print(f"[green]Removed suppression[/] {scope}={value}")
+
+
+def cmd_suppressions(args: argparse.Namespace) -> None:
+    rows = StateStore(args.db).list_suppressions()
+    if not rows:
+        console.print("No suppressions.")
+        return
+    for s in rows:
+        console.print(f"{s['scope']}={s['value']}  "
+                      f"[dim]{s.get('reason') or ''} ({s.get('created_by') or '?'} @ {s['ts']})[/]")
+
+
+def cmd_history(args: argparse.Namespace) -> None:
+    rows = StateStore(args.db).history(args.engagement)
+    if not rows:
+        console.print(f"No runs recorded for '{args.engagement}'.")
+        return
+    for r in rows:
+        console.print(f"run {r['id']}: {r['ts']}  reported={r['reported']}  "
+                      f"[dim]{r.get('target') or ''}[/]")
+
+
 def _add_output_flags(parser: argparse.ArgumentParser) -> None:
     """Report-format flags shared by scan-repo and scan-url. Combine freely;
     findings.json is always written regardless."""
@@ -191,6 +231,30 @@ def build_parser() -> argparse.ArgumentParser:
     va = sub.add_parser("verify-audit", help="verify a run's hash-chained audit log")
     va.add_argument("--engagement", required=True)
     va.set_defaults(func=cmd_verify_audit)
+
+    sup = sub.add_parser("suppress", help="mark a finding_id or rule_id as accepted-risk / FP")
+    g = sup.add_mutually_exclusive_group(required=True)
+    g.add_argument("--finding-id")
+    g.add_argument("--rule-id")
+    sup.add_argument("--reason", default="")
+    sup.add_argument("--db", default=DEFAULT_DB)
+    sup.set_defaults(func=cmd_suppress)
+
+    uns = sub.add_parser("unsuppress", help="remove a suppression")
+    g2 = uns.add_mutually_exclusive_group(required=True)
+    g2.add_argument("--finding-id")
+    g2.add_argument("--rule-id")
+    uns.add_argument("--db", default=DEFAULT_DB)
+    uns.set_defaults(func=cmd_unsuppress)
+
+    sps = sub.add_parser("suppressions", help="list active suppressions")
+    sps.add_argument("--db", default=DEFAULT_DB)
+    sps.set_defaults(func=cmd_suppressions)
+
+    hist = sub.add_parser("history", help="show scan history for an engagement")
+    hist.add_argument("--engagement", required=True)
+    hist.add_argument("--db", default=DEFAULT_DB)
+    hist.set_defaults(func=cmd_history)
 
     return p
 

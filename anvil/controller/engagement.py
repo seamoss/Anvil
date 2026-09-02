@@ -39,6 +39,7 @@ from anvil.reporting.report import ReportGenerator
 from anvil.reporting.sarif import SarifReporter
 from anvil.schemas.authorization import AuthorizationRecord
 from anvil.schemas.finding import Finding
+from anvil.state.store import StateStore
 from anvil.triage.engine import TriageEngine
 
 
@@ -52,6 +53,8 @@ class Engagement:
         self.evidence = EvidenceStore(self.root / "evidence")
         self.guard = ScopeGuard(auth)  # raises if unsigned/tampered/expired
         self.triage = TriageEngine()
+        self.state = StateStore(self.root.parent / "anvil.db")  # shared across engagements
+        self.last_diff = None
 
         self.audit.record(
             "engagement_opened",
@@ -117,7 +120,7 @@ class Engagement:
         if logic_review and self.triage.online:
             findings += self._run_logic_review(repo_path, last_ref or "")
 
-        return self._triage_and_persist(findings, deep_deps=deep_deps)
+        return self._triage_and_persist(findings, deep_deps=deep_deps, target=repo_path)
 
     def _run_logic_review(self, repo_path: str, fallback_ref: str) -> List[Finding]:
         files = self._sample_source(repo_path)
@@ -186,10 +189,12 @@ class Engagement:
             )
             findings += found
 
-        return self._triage_and_persist(findings)
+        return self._triage_and_persist(findings, target=target_url)
 
     # --- shared tail -------------------------------------------------------
-    def _triage_and_persist(self, findings: List[Finding], deep_deps: bool = False) -> List[Finding]:
+    def _triage_and_persist(
+        self, findings: List[Finding], deep_deps: bool = False, target: str = None
+    ) -> List[Finding]:
         sca_count = sum(1 for f in findings if f.source_tool in ("trivy",))
         self.audit.record(
             "triage_started",
@@ -205,6 +210,16 @@ class Engagement:
             },
         )
 
+        # Apply persisted suppressions, then record the run and diff vs last time.
+        suppressed = self.state.apply_suppressions(triaged)
+        self.last_diff = self.state.record_run(self.auth.engagement_id, triaged, target=target)
+        self.audit.record(
+            "run_recorded",
+            {"run_id": self.last_diff.run_id, "new": len(self.last_diff.new),
+             "resolved": len(self.last_diff.resolved), "existing": len(self.last_diff.existing),
+             "suppressed": suppressed},
+        )
+
         (self.root / "findings.json").write_text(
             json.dumps([f.model_dump(mode="json") for f in triaged], indent=2),
             encoding="utf-8",
@@ -213,7 +228,7 @@ class Engagement:
 
     def write_report(self, findings: List[Finding]) -> Path:
         report = ReportGenerator().render_markdown(
-            self.auth.engagement_id, self.guard.scope_summary(), findings
+            self.auth.engagement_id, self.guard.scope_summary(), findings, diff=self.last_diff
         )
         path = self.root / "report.md"
         path.write_text(report, encoding="utf-8")
@@ -229,7 +244,7 @@ class Engagement:
 
     def write_html(self, findings: List[Finding]) -> Path:
         html = HtmlReporter().render(
-            self.auth.engagement_id, self.guard.scope_summary(), findings
+            self.auth.engagement_id, self.guard.scope_summary(), findings, diff=self.last_diff
         )
         path = self.root / "report.html"
         path.write_text(html, encoding="utf-8")

@@ -51,6 +51,8 @@ h2 { font-size: 1.15rem; margin: 2rem 0 .75rem; border-bottom: 2px solid var(--l
 .badge { font-size: .72rem; background: #eceef1; color: #333; border-radius: 5px; padding: .12rem .5rem; }
 .badge.sev { color: #fff; }
 .badge.local { background: #ede7ff; color: #5b3fa8; font-weight: 600; }
+.badge.new { background: #0a7d33; color: #fff; font-weight: 600; }
+.badge.supp { background: #dfe3e8; color: #5a6472; text-decoration: line-through; }
 .loc { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem;
        background: #eceef1; padding: .12rem .4rem; border-radius: 4px; }
 .fid { color: var(--muted); font-family: ui-monospace, monospace; font-size: .75rem; }
@@ -70,12 +72,14 @@ footer { color: var(--muted); font-size: .8rem; margin-top: 2.5rem; border-top: 
 
 
 class HtmlReporter:
-    def render(self, engagement_id: str, scope_summary: List[str], findings: List[Finding]) -> str:
+    def render(self, engagement_id: str, scope_summary: List[str],
+               findings: List[Finding], diff=None) -> str:
         reportable = [
             f for f in findings
             if f.status in (FindingStatus.CONFIRMED, FindingStatus.TRIAGED)
         ]
         reportable.sort(key=lambda f: (f.severity.rank, f.title))
+        new_ids = set(diff.new) if diff is not None else set()
         counts = Counter(f.severity for f in reportable)
         excluded = sum(1 for f in findings if f.status == FindingStatus.FALSE_POSITIVE)
         dupes = sum(1 for f in findings if f.status == FindingStatus.DUPLICATE)
@@ -103,6 +107,11 @@ class HtmlReporter:
                 f'<p class="sub">🔒 {local_count} local-only finding(s) — reported here, '
                 "excluded from workflow integrations.</p>"
             )
+        if diff is not None and not diff.is_first_run:
+            p.append(
+                f'<p class="sub">Since last scan: <strong>{len(diff.new)}</strong> new, '
+                f"<strong>{len(diff.resolved)}</strong> resolved.</p>"
+            )
 
         # scope
         p.append("<h2>Scope</h2><ul>")
@@ -115,7 +124,7 @@ class HtmlReporter:
         for sev in _SEVERITY_ORDER:
             group = [f for f in reportable if f.severity == sev]
             for f in group:
-                p.append(self._card(f))
+                p.append(self._card(f, new_ids))
 
         p.append(self._matrix(reportable))
         p.append(
@@ -130,9 +139,13 @@ class HtmlReporter:
                f"<title>Anvil — {escape(engagement_id)}</title><style>{_CSS}</style></head>" \
                f"<body>{body}</body></html>"
 
-    def _card(self, f: Finding) -> str:
+    def _card(self, f: Finding, new_ids=frozenset()) -> str:
         color = _SEV_COLOR[f.severity]
         badges = [f'<span class="badge sev" style="background:{color}">{escape(f.severity.value)}</span>']
+        if f.finding_id in new_ids:
+            badges.append('<span class="badge new">🆕 new</span>')
+        if f.suppressed:
+            badges.append('<span class="badge supp">suppressed</span>')
         if f.local_only:
             badges.append('<span class="badge local">🔒 local-only</span>')
         badges.append(f'<span class="badge">confidence: {escape(f.confidence.value)}</span>')

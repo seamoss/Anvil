@@ -31,7 +31,8 @@ authorization (signed) → scope guard → SAST | DAST pipeline
 | Evidence | `anvil/evidence/` | content-addressed raw scanner output |
 | SAST | `anvil/pipelines/sast/` | Semgrep + Bandit + CodeQL (code), gitleaks (secrets), Trivy (SCA) adapters |
 | DAST | `anvil/pipelines/dast/` | http-checks (built-in: headers/cookies/CORS/methods/exposure/clickjacking), testssl (TLS/cert), nuclei (safe posture) |
-| Triage | `anvil/triage/` | Claude triage (prompt-cached, chunked) + SCA fast-path + offline heuristic fallback |
+| Triage | `anvil/triage/` | Claude triage (prompt-cached, chunked) + SCA fast-path + local-only gate + offline heuristic fallback |
+| State | `anvil/state/` | SQLite store: cross-run diffing (new/resolved), suppressions, history |
 | Reporting | `anvil/reporting/` | OWASP Top 10 / SOC 2 / CWE + CVSS reports — Markdown, SARIF, HTML/PDF |
 
 ## Install
@@ -72,7 +73,19 @@ uv run anvil scan-url --auth config/authorizations/acme.yaml --url https://stagi
 
 # 4. Verify a run's audit trail
 uv run anvil verify-audit --engagement ACME-2026-Q3
+
+# 5. Track state across runs
+uv run anvil history --engagement ACME-2026-Q3        # scan history
+uv run anvil suppress --rule-id <id> --reason "..."   # accept-risk / mark FP
+uv run anvil suppress --finding-id <id> --reason "..."
+uv run anvil suppressions                             # list active suppressions
 ```
+
+Anvil keeps state across runs in `runs/anvil.db` (SQLite, gitignored). Each
+scan records a run and diffs against the engagement's previous one — reports and
+the CLI show **N new / N resolved since last scan**, and new findings are tagged
+🆕. Suppressed findings (accepted-risk / confirmed-FP) stay in the report tagged
+`suppressed` but are excluded from workflow integrations.
 
 Findings in local/dev-only artifacts (`.env.local`, `local.log`, loopback URLs,
 `docker-compose.override.yml`, …) are tagged **local-only**: reported with full
@@ -91,11 +104,12 @@ The `Finding` schema is the spine — adding coverage is one adapter each.
 
 Done: Semgrep + Bandit + CodeQL (code), gitleaks (secrets), Trivy (SCA) for
 SAST; http-checks (first-party) + testssl (TLS) + nuclei for DAST; SARIF +
-HTML/PDF reports. SCA findings fast-path around LLM triage by default
-(`--deep-deps` to include them).
-Next: authenticated DAST (deferred — session token/header, still read-only);
-OWASP ZAP (passive+safe) for DAST; per-engagement scanner policy; and finding
-diffing across runs.
+HTML/PDF reports; SCA fast-path (`--deep-deps` to include); local-only gate;
+persistent state with cross-run diffing + suppressions.
+Next: workflow integrations (Linear/Jira/GitHub issues, Slack — honoring the
+local-only + suppressed flags); authenticated DAST (deferred — session
+token/header, still read-only); OWASP ZAP (passive+safe); trend/burn-down
+reporting; per-engagement scanner policy.
 
 ## Tests
 
