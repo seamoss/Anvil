@@ -93,9 +93,18 @@ def _run_scan(args: argparse.Namespace, kind: str) -> None:
             "and significantly higher token consumption."
         )
 
+    if kind == "repo" and getattr(args, "reachability", False):
+        console.print(
+            "[yellow]--reachability:[/] first-party pattern findings will be sent to "
+            "the LLM with code context for reachability judgment (adds token cost)."
+        )
+
     try:
         if kind == "repo":
-            findings = eng.scan_repo(args.repo, logic_review=args.logic, deep_deps=args.deep_deps)
+            findings = eng.scan_repo(
+                args.repo, logic_review=args.logic, deep_deps=args.deep_deps,
+                reachability=args.reachability,
+            )
         else:
             findings = eng.scan_url(args.url)
     except ScopeViolation as exc:
@@ -233,6 +242,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--deep-deps", action="store_true",
         help="also send dependency (SCA/Trivy) findings through LLM triage "
              "(default: fast-path them; --deep-deps costs many more tokens)",
+    )
+    sr.add_argument(
+        "--reachability", action="store_true",
+        help="LLM reachability analysis for first-party pattern findings stuck at "
+             "'unknown' (sharpens priority; adds token cost)",
     )
     _add_output_flags(sr)
     sr.set_defaults(func=cmd_scan_repo)

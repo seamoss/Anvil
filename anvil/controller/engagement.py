@@ -25,6 +25,7 @@ import yaml
 
 from anvil.controller.audit import AuditLog
 from anvil.controller.scope_guard import ScopeGuard, ScopeViolation
+from anvil.enrich.reachability import ReachabilityAnalyzer
 from anvil.enrich.risk import enrich
 from anvil.evidence.store import EvidenceStore
 from anvil.pipelines.dast.http_checks import HttpChecksAdapter
@@ -84,7 +85,8 @@ class Engagement:
         return [SemgrepAdapter(), BanditAdapter(), CodeqlAdapter(), GitleaksAdapter(),
                 TrivyAdapter(), OsvScannerAdapter()]
 
-    def scan_repo(self, repo_path: str, logic_review: bool = False, deep_deps: bool = False) -> List[Finding]:
+    def scan_repo(self, repo_path: str, logic_review: bool = False, deep_deps: bool = False,
+                  reachability: bool = False) -> List[Finding]:
         try:
             self.guard.check_repo(repo_path)
         except ScopeViolation as exc:
@@ -123,7 +125,9 @@ class Engagement:
         if logic_review and self.triage.online:
             findings += self._run_logic_review(repo_path, last_ref or "")
 
-        return self._triage_and_persist(findings, deep_deps=deep_deps, target=repo_path)
+        return self._triage_and_persist(
+            findings, deep_deps=deep_deps, target=repo_path, reachability=reachability
+        )
 
     def _run_logic_review(self, repo_path: str, fallback_ref: str) -> List[Finding]:
         files = self._sample_source(repo_path)
@@ -196,7 +200,8 @@ class Engagement:
 
     # --- shared tail -------------------------------------------------------
     def _triage_and_persist(
-        self, findings: List[Finding], deep_deps: bool = False, target: str = None
+        self, findings: List[Finding], deep_deps: bool = False, target: str = None,
+        reachability: bool = False,
     ) -> List[Finding]:
         sca_count = sum(1 for f in findings if f.source_tool in ("trivy",))
         self.audit.record(
@@ -213,8 +218,16 @@ class Engagement:
             },
         )
 
-        # Enrich with contextual risk (reachability harvested by the scanners ×
-        # asset criticality × exposure), then apply suppressions and record.
+        # Tier-2 reachability: LLM judgment for first-party pattern findings with
+        # no proven flow (must precede scoring — reachability feeds the score).
+        if reachability and target:
+            analyzer = ReachabilityAnalyzer()
+            if analyzer.online:
+                analyzer.analyze(triaged, target)
+                self.audit.record("reachability_analyzed", {"token_usage": analyzer.usage})
+
+        # Enrich with contextual risk (reachability × asset criticality ×
+        # exposure), then apply suppressions and record.
         enrich(triaged, asset=self.auth.asset)
         suppressed = self.state.apply_suppressions(triaged)
         self.last_diff = self.state.record_run(self.auth.engagement_id, triaged, target=target)

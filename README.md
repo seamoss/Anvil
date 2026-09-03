@@ -32,7 +32,7 @@ authorization (signed) → scope guard → SAST | DAST pipeline
 | SAST | `anvil/pipelines/sast/` | Semgrep + Bandit + CodeQL (code), gitleaks (secrets), Trivy + OSV-Scanner (dependency CVEs, dual-source) + Trivy licenses |
 | DAST | `anvil/pipelines/dast/` | http-checks (built-in: headers/cookies/CORS/methods/exposure/clickjacking), testssl (TLS/cert), nuclei (safe posture) |
 | Triage | `anvil/triage/` | Claude triage (prompt-cached, chunked) + SCA fast-path + local-only gate + offline heuristic fallback |
-| Enrich | `anvil/enrich/` | reachability (harvested from CodeQL/semgrep flows) + contextual risk scoring → P1-P4 |
+| Enrich | `anvil/enrich/` | reachability (CodeQL/semgrep flows + LLM tier-2 for pattern findings) + contextual risk scoring → P1-P4 |
 | State | `anvil/state/` | SQLite store: cross-run diffing (new/resolved), suppressions, history |
 | Reporting | `anvil/reporting/` | OWASP Top 10 / SOC 2 / CWE + CVSS reports — Markdown, SARIF, HTML/PDF |
 
@@ -67,7 +67,8 @@ uv run anvil init-auth --engagement ACME-2026-Q3 --by you@org.com \
   --out config/authorizations/acme.yaml
 
 # 2. SAST — scan a repo (choose any mix of output formats)
-uv run anvil scan-repo --auth config/authorizations/acme.yaml --repo /path/to/checkout --logic --report --sarif --html
+#    --logic: LLM business-logic pass · --reachability: LLM reachability for pattern findings
+uv run anvil scan-repo --auth config/authorizations/acme.yaml --repo /path/to/checkout --logic --reachability --report --sarif --html
 
 # 3. DAST — scan a live URL (safe posture)
 uv run anvil scan-url --auth config/authorizations/acme.yaml --url https://staging.acme.example --report --sarif
@@ -112,10 +113,13 @@ persistent state with cross-run diffing + suppressions; contextual risk scoring
 Dependency findings render in their own lane (dual-source CVEs deduped across
 Trivy + OSV, plus license concerns), separate from the risk-ranked first-party
 findings.
-Next: LLM reachability pass for pattern findings without a proven flow (tier 2);
-entry-point mapping (tier 1); workflow integrations (Linear/Jira/GitHub issues,
-Slack — honoring local-only + suppressed); authenticated DAST (deferred); OWASP
-ZAP (passive+safe); trend/burn-down reporting.
+Reachability is three-tier: harvested from CodeQL/semgrep flows (free), plus an
+opt-in LLM pass (`--reachability`) that judges pattern findings and names the
+entry point — feeding the P1-P4 score.
+Next: entry-point mapping (tier 1, structural); workflow integrations
+(Linear/Jira/GitHub issues, Slack — honoring local-only + suppressed);
+authenticated DAST (deferred); OWASP ZAP (passive+safe); trend/burn-down
+reporting.
 
 ## Tests
 
